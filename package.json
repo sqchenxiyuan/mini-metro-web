@@ -1,0 +1,31 @@
+{
+  "name": "@snack-lab/orchard-metro",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5175 --strictPort",
+    "check": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build && node scripts/build-sdk.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 4175 --strictPort",
+    "test": "vitest run",
+    "test:browser": "node scripts/browser-verify.mjs",
+    "test:sdk": "node scripts/sdk-package-verify.mjs",
+    "test:campaign": "node scripts/campaign-verify.mjs",
+    "demo:agent": "node examples/run-agent.mjs",
+    "serve:agent": "node examples/http-agent.mjs"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^24.19.2",
+    "@types/three": "^0.180.0",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4"
+  }
+}
