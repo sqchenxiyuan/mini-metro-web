@@ -110,6 +110,20 @@ describe('shared station visual layout', () => {
     expect(maxY).toBeLessThan(0.32);
     renderer.dispose();
   });
+  it('renders reversed-coordinate shared-edge color order consistently with its own train at the dense station', () => {
+    const { renderer, state } = setup();
+    const [a,b,c] = state.stations;
+    a.x=8; a.y=0; b.x=0; b.y=0; c.x=7; c.y=1;
+    state.lines=[{id:0,stops:[a.id,b.id],loop:false},{id:1,stops:[a.id,b.id],loop:false},{id:2,stops:[a.id,c.id],loop:false}];
+    state.trains=[{id:900,line:1,from:a.id,to:b.id,progress:0.08,direction:1,dwell:0,passengers:[],carriages:0,retiring:false,moveTo:null}];
+    renderer.render(state);
+    const group=(renderer as unknown as {trains:Map<number,{group:THREE.Group}>}).trains.get(900)!.group;
+    const rail=tracks(renderer).find((m)=>(m.material as THREE.MeshStandardMaterial).color.getHexString()===new THREE.Color(LINE_COLORS[1]).getHexString())!;
+    const path=(rail.geometry as THREE.TubeGeometry).parameters.path;
+    const expectedZ=path.getPoint(0).z+(path.getPoint(1).z-path.getPoint(0).z)*0.08;
+    expect(group.position.z).toBeCloseTo(expectedZ,3);
+    renderer.dispose();
+  });
   it('renders a shared pair plus a distinct same-sector branch with three non-overlapping station entrances', () => {
     const { renderer, state } = setup();
     const [a,b,c] = state.stations;

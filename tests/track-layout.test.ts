@@ -82,6 +82,24 @@ describe('visual track layout', () => {
     expect(a.lanes.find(({ neighborId }) => neighborId === 11)?.offset).toBeCloseTo(edge.endpointOffsets?.from ?? edge.lanes[0].offset);
     expect(b.lanes.find(({ neighborId }) => neighborId === 10)?.offset).toBeCloseTo(-(edge.endpointOffsets?.to ?? edge.lanes[0].offset));
   });
+  it('associates per-lane endpoint offsets with the correct station when ID order opposes coordinate order', () => {
+    const state = fixture([[8, 0], [0, 0], [1, 1], [7, 1]], [[10, 11], [10, 11], [10, 13], [11, 12]]);
+    state.lines[0].id = 2;
+    state.lines[1].id = 3;
+    state.lines[2].id = 0;
+    state.lines[3].id = 1;
+    const layout = deriveTrackLayout(state);
+    const edge = layout.segments.find(({ from, to }) => from === 10 && to === 11)!;
+    expect(edge.points[0].x).toBe(8);
+    const a = layout.approaches.find(({ stationId, sector }) => stationId === 10 && sector === 4)!;
+    const b = layout.approaches.find(({ stationId, sector }) => stationId === 11 && sector === 0)!;
+    for (const lane of edge.lanes) {
+      const endpoint = edge.laneEndpoints?.find((item) => item.lineId === lane.lineId);
+      const from = endpoint?.from ?? lane.offset, to = endpoint?.to ?? lane.offset;
+      expect(from).toBeCloseTo(a.lanes.find((item) => item.lineId === lane.lineId && item.neighborId === 11)!.offset);
+      expect(to).toBeCloseTo(-b.lanes.find((item) => item.lineId === lane.lineId && item.neighborId === 10)!.offset);
+    }
+  });
   it('mirrors lane offsets at the far station to preserve physical color order', () => {
     const state = fixture([[0, 0], [4, 0]], [[10, 11], [11, 10]]);
     const layout = deriveTrackLayout(state);
