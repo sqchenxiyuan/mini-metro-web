@@ -405,8 +405,7 @@ function update(): void {
     n.classList.toggle('crowded', p.queue.length > stationCapacity(p));
     n.style.setProperty('--crowd', `${(p.crowd / RULES.crowdTicks) * 100}%`);
     n.setAttribute('aria-label', `${p.id} 号 ${p.shape} 车站，${p.queue.length} 人候车${p.crowd ? `，拥挤还剩 ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒` : ''}`);
-    const content = `<span class="station-tag">${GLYPHS[p.shape]} <small>${p.id}</small>${p.interchange ? ' ✦' : ''}</span>${
-      p.queue.length
+    const content = `${p.queue.length
         ? `<span class="passengers">${p.queue
             .slice(0, 8)
             .map((v) => `<i class="shape-${v.shape}">${GLYPHS[v.shape]}</i>`)

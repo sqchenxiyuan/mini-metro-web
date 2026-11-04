@@ -27,6 +27,10 @@ try {
   await page.locator('#station-detail').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#station-detail').isVisible(), true, 'station information opens contextually');
   assert.match(await page.locator('#station-detail').innerText(), /人候车/);
+  assert.equal(await page.locator('.station-label.selected .station-tag').count(), 0,
+    'selected station has no redundant floating ID badge');
+  assert.match(await page.locator('.station-label.selected').getAttribute('aria-label'), /号.*车站/);
+  await page.screenshot({ path: `${output}/selected-station.png`, fullPage: true });
   await page.click('#help');
   assert.equal(await page.locator('#help-dialog').isVisible(), true);
   await page.click('#help-close');
