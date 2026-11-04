@@ -462,11 +462,10 @@ export class MetroRenderer {
     );
     group.add(mesh(new THREE.TubeGeometry(colored, 1, 0.105, 8, false), MAT(color)));
   }
-  private drawLane(
-    points: { x: number; y: number }[], offset: number, radius: number,
-    color: string, group: THREE.Group, height: number,
+  private trackVertices(
+    points: { x: number; y: number }[], offset: number, height: number,
     endpointOffsets?: { from: number; to: number },
-  ): void {
+  ): THREE.Vector3[] {
     const vertices: THREE.Vector3[] = [];
     const startOffset = endpointOffsets?.from ?? offset;
     const endOffset = endpointOffsets?.to ?? offset;
@@ -498,6 +497,14 @@ export class MetroRenderer {
       }
       vertices.push(new THREE.Vector3(b.x + nx * localOffset, height, b.y + nz * localOffset));
     }
+    return vertices;
+  }
+  private drawLane(
+    points: { x: number; y: number }[], offset: number, radius: number,
+    color: string, group: THREE.Group, height: number,
+    endpointOffsets?: { from: number; to: number },
+  ): void {
+    const vertices = this.trackVertices(points, offset, height, endpointOffsets);
     if (vertices.length < 2) return;
     // Each offset segment remains straight through the station entrance.
     for (let i = 1; i < vertices.length; i++) {
@@ -505,15 +512,30 @@ export class MetroRenderer {
       group.add(mesh(new THREE.TubeGeometry(path, 1, radius, 10, false), MAT(color)));
     }
   }
-  private laneOffset(layout: ReturnType<typeof deriveTrackLayout> | null, lineId: number, from: number, to: number, progress = 0): number {
-    const segment = layout?.segments.find((edge) =>
-      (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from));
-    const lane = segment?.lanes.find((item) => item.lineId === lineId);
-    if (!lane || !segment) return 0;
-    const endpoints = segment.endpointOffsets;
-    const t = from === segment.from ? progress : 1 - progress;
-    const canonical = endpoints ? endpoints.from + (endpoints.to - endpoints.from) * t : lane.offset;
-    return from === segment.from ? canonical : -canonical;
+  private lanePosition(
+    layout: ReturnType<typeof deriveTrackLayout> | null, lineId: number,
+    from: number, to: number, progress: number,
+    a: Station, b: Station,
+  ): { x: number; y: number } {
+    const edge = layout?.segments.find((item) =>
+      (item.from === from && item.to === to) || (item.from === to && item.to === from));
+    const lane = edge?.lanes.find((item) => item.lineId === lineId);
+    if (!edge || !lane) return trackPosition(a, b, progress);
+    const vertices = this.trackVertices(edge.points, lane.offset, 0.48, edge.endpointOffsets);
+    if (vertices.length < 2) return trackPosition(a, b, progress);
+    const lengths = edge.points.slice(1).map((point, index) =>
+      Math.hypot(point.x - edge.points[index].x, point.y - edge.points[index].y));
+    const total = lengths.reduce((sum, length) => sum + length, 0);
+    let remaining = total * (from === edge.from ? progress : 1 - progress);
+    for (let i = 0; i < lengths.length; i++) {
+      if (remaining <= lengths[i] || i === lengths.length - 1) {
+        const t = lengths[i] ? Math.max(0, Math.min(1, remaining / lengths[i])) : 0;
+        return { x: THREE.MathUtils.lerp(vertices[i].x, vertices[i + 1].x, t),
+          y: THREE.MathUtils.lerp(vertices[i].z, vertices[i + 1].z, t) };
+      }
+      remaining -= lengths[i];
+    }
+    return trackPosition(a, b, progress);
   }
   showPreview(s: State, stops: number[], line: number, valid = true): void {
     disposeGroup(this.preview);
@@ -732,10 +754,10 @@ export class MetroRenderer {
       const a = station(s, t.from),
         b = t.to !== null ? station(s, t.to) : a,
         position = trackPosition(a, b, t.progress),
-        lane = t.to !== null ? this.laneOffset(this.trackLayout, t.line, t.from, t.to, t.progress) : 0,
-        tangent = new THREE.Vector2(Math.sin(position.angle), Math.cos(position.angle)),
-        lateral = new THREE.Vector2(tangent.y, -tangent.x);
-      entry.group.position.set(position.x + lateral.x * lane, 0.48, position.y + lateral.y * lane);
+        visible = t.to !== null
+          ? this.lanePosition(this.trackLayout, t.line, t.from, t.to, t.progress, a, b)
+          : position;
+      entry.group.position.set(visible.x, 0.48, visible.y);
       if (t.to !== null) entry.group.rotation.y = position.angle;
       entry.group.visible = true;
     }

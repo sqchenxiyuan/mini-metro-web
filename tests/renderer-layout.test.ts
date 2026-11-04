@@ -191,6 +191,24 @@ describe('shared station visual layout', () => {
     expect(zs[1] - zs[0]).toBeCloseTo(0.21, 4);
     renderer.dispose();
   });
+  it('keeps an outer-lane train centered on its visible mitered bend', () => {
+    const { renderer, state } = setup();
+    const a = state.stations[0], b = state.stations[1];
+    a.x = 0; a.y = 0; b.x = 8; b.y = 3;
+    state.lines = LINE_COLORS.map((_, id) => ({ id, stops: [a.id, b.id], loop: false }));
+    state.trains = [{ id: 990, line: 6, from: a.id, to: b.id,
+      progress: 5 / (5 + Math.hypot(3, 3)), direction: 1, dwell: 0,
+      passengers: [], carriages: 0, retiring: false, moveTo: null }];
+    renderer.render(state);
+    const color = new THREE.Color(LINE_COLORS[6]).getHexString();
+    const rails = tracks(renderer).filter((m) =>
+      (m.material as THREE.MeshStandardMaterial).color.getHexString() === color);
+    expect(rails).toHaveLength(2);
+    const bend = (rails[0].geometry as THREE.TubeGeometry).parameters.path.getPoint(1);
+    const train = (renderer as unknown as { trains: Map<number, { group: THREE.Group }> }).trains.get(990)!.group.position;
+    expect(Math.hypot(train.x - bend.x, train.z - bend.z)).toBeLessThan(0.105);
+    renderer.dispose();
+  });
   it('keeps a 45-degree offset bend miter inside the two intended parallel lane edges', () => {
     const { renderer, state } = setup();
     const a = state.stations[0], b = state.stations[1];
