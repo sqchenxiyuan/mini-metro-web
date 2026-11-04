@@ -110,6 +110,20 @@ describe('shared station visual layout', () => {
     expect(maxY).toBeLessThan(0.32);
     renderer.dispose();
   });
+  it('renders a shared pair plus a distinct same-sector branch with three non-overlapping station entrances', () => {
+    const { renderer, state } = setup();
+    const [a,b,c] = state.stations;
+    a.x=0; a.y=0; b.x=8; b.y=0; c.x=7; c.y=1;
+    state.lines=[{id:0,stops:[a.id,b.id],loop:false},{id:1,stops:[a.id,b.id],loop:false},{id:2,stops:[a.id,c.id],loop:false}];
+    renderer.render(state);
+    const paths=tracks(renderer).filter((m)=>LINE_COLORS.some((col)=>new THREE.Color(col).getHexString()===(m.material as THREE.MeshStandardMaterial).color.getHexString()))
+      .map((m)=>(m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0))
+      .filter((point)=>Math.abs(point.x-a.x)<0.00001);
+    expect(paths).toHaveLength(3);
+    const z=paths.map((point)=>point.z).sort((x,y)=>x-y);
+    for(let i=1;i<z.length;i++)expect(z[i]-z[i-1]).toBeCloseTo(0.21,4);
+    renderer.dispose();
+  });
   it('keeps distinct same-sector branches separated beyond the entrance and aligns their trains to those visible lanes', () => {
     const { renderer, state } = setup();
     const origin = state.stations[0], one = state.stations[1], two = state.stations[2];

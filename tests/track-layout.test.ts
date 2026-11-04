@@ -61,6 +61,16 @@ describe('visual track layout', () => {
     ]);
   });
 
+  it('keeps a shared two-line edge and a third same-sector branch exactly touching at their common station', () => {
+    const state = fixture([[0, 0], [8, 0], [7, 1]], [[10, 11], [10, 11], [10, 12]]);
+    const layout = deriveTrackLayout(state);
+    const edge = layout.segments.find(({ from, to }) => from === 10 && to === 11)!;
+    const branch = layout.segments.find(({ from, to }) => from === 10 && to === 12)!;
+    const centers = [...edge.lanes.map((lane) => edge.laneEndpoints?.find((item) => item.lineId === lane.lineId)?.from ?? lane.offset),
+      branch.endpointOffsets?.from ?? branch.lanes[0].offset].sort((a, b) => a - b);
+    expect(centers).toHaveLength(3);
+    for (let i = 1; i < centers.length; i++) expect(centers[i] - centers[i - 1]).toBeCloseTo(0.21, 4);
+  });
   it('preserves both station entrance lane requirements on a segment with dense junctions at each endpoint', () => {
     const state = fixture([[0, 0], [8, 0], [7, 1], [1, 0]], [[10, 12], [10, 11], [11, 13]]);
     const layout = deriveTrackLayout(state);

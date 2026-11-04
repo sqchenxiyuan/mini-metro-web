@@ -521,7 +521,8 @@ export class MetroRenderer {
       (item.from === from && item.to === to) || (item.from === to && item.to === from));
     const lane = edge?.lanes.find((item) => item.lineId === lineId);
     if (!edge || !lane) return trackPosition(a, b, progress);
-    const vertices = this.trackVertices(edge.points, lane.offset, 0.48, edge.endpointOffsets);
+    const vertices = this.trackVertices(edge.points, lane.offset, 0.48,
+      edge.laneEndpoints?.find((item) => item.lineId === lineId) ?? edge.endpointOffsets);
     if (vertices.length < 2) return trackPosition(a, b, progress);
     const lengths = edge.points.slice(1).map((point, index) =>
       Math.hypot(point.x - edge.points[index].x, point.y - edge.points[index].y));
@@ -702,7 +703,8 @@ export class MetroRenderer {
       for (const edge of this.trackLayout.segments) {
         this.drawLane(edge.points, 0, 0.105, '#fffaf6', this.tracks, 0.20);
         for (const lane of edge.lanes)
-          this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43, edge.endpointOffsets);
+          this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43,
+            edge.laneEndpoints?.find((item) => item.lineId === lane.lineId) ?? edge.endpointOffsets);
       }
       for (const t of ghost)
         this.track(
