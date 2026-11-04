@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {
   LINE_COLORS,
+  RULES,
   riverCount,
   riverX,
   segments,
@@ -167,6 +168,94 @@ function trainModel(color: string, carriages: number): THREE.Group {
   }
   return g;
 }
+// Canvas texture keeps the small, camera-facing load card readable at map zoom.
+function trainLoadCard(passengers: State['trains'][number]['passengers'], carriages: number): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 384;
+  canvas.height = 156;
+  const ctx = canvas.getContext('2d')!;
+  const counts = new Map<Shape, number>();
+  for (const p of passengers) counts.set(p.shape, (counts.get(p.shape) ?? 0) + 1);
+  const groups = [...counts].sort(([a], [b]) => a.localeCompare(b));
+  const rows = Math.max(1, Math.ceil(groups.length / 5));
+  const cardHeight = groups.length ? 74 + rows * 39 : 83;
+  ctx.fillStyle = '#fffaf6';
+  ctx.strokeStyle = '#465069';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.roundRect(3, 3, 378, cardHeight, 15);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#283248';
+  ctx.font = 'bold 35px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${passengers.length} / ${RULES.capacity * (1 + carriages)}`, 192, 42);
+  groups.forEach(([shape, count], i) => {
+    const col = i % 5, row = Math.floor(i / 5);
+    const x = 33 + col * 73, y = 82 + row * 39;
+    const outline = stationOutline(shape, 14);
+    const points = outline.getPoints(20);
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      if (index) ctx.lineTo(x + point.x, y - point.y);
+      else ctx.moveTo(x + point.x, y - point.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = '#3e5877';
+    ctx.fill();
+    ctx.fillStyle = '#283248';
+    ctx.font = 'bold 25px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`×${count}`, x + 17, y + 9);
+  });
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const badge = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+  badge.name = 'train-load';
+  badge.position.set(0, 1.55, -carriages * 0.4);
+  badge.scale.set(2.55, 1.04, 1);
+  badge.renderOrder = 20;
+  return badge;
+}
+function disposeBadge(badge: THREE.Sprite): void {
+  (badge.material as THREE.SpriteMaterial).map?.dispose();
+  badge.material.dispose();
+}
+type LoadSnapshot = {
+  tick: number;
+  seed: number;
+  score: number;
+  trains: Map<number, { from: number; to: number | null; line: number; passengers: Map<number, Shape> }>;
+  queues: Map<number, Set<number>>;
+};
+type Transfer = { sprite: THREE.Sprite; start: THREE.Vector3; end: THREE.Vector3; tick: number };
+function transferMarker(shape: Shape): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#fffaf6';
+  ctx.strokeStyle = '#283248';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(32, 32, 29, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  const points = stationOutline(shape, 19).getPoints(28);
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    if (i) ctx.lineTo(32 + p.x, 32 - p.y);
+    else ctx.moveTo(32 + p.x, 32 - p.y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = '#3e5877';
+  ctx.fill();
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
+  sprite.scale.set(0.7, 0.7, 1);
+  sprite.renderOrder = 21;
+  return sprite;
+}
 export class MetroRenderer {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
@@ -176,7 +265,10 @@ export class MetroRenderer {
   private tracks = new THREE.Group();
   private preview = new THREE.Group();
   private stations = new Map<number, THREE.Group>();
-  private trains = new Map<number, { group: THREE.Group; carriages: number; line: number }>();
+  private trains = new Map<number, { group: THREE.Group; carriages: number; line: number; loadKey: string }>();
+  private transfers = new THREE.Group();
+  private activeTransfers: Transfer[] = [];
+  private loadSnapshot: LoadSnapshot | null = null;
   private city: City | null = null;
   private routeKey = '';
   private observer: ResizeObserver;
@@ -218,7 +310,7 @@ export class MetroRenderer {
     sun.shadow.normalBias = 0.04;
     sun.shadow.radius = 3;
     this.scene.add(sun);
-    this.scene.add(this.environment, this.tracks, this.preview);
+    this.scene.add(this.environment, this.tracks, this.preview, this.transfers);
     this.camera.position.set(0, 32, 24);
     this.camera.lookAt(0, 0, 0);
     this.observer = new ResizeObserver(() => this.resize());
@@ -382,7 +474,80 @@ export class MetroRenderer {
   clearPreview(): void {
     disposeGroup(this.preview);
   }
+  private clearTransfers(): void {
+    for (const { sprite } of this.activeTransfers) disposeBadge(sprite);
+    this.activeTransfers = [];
+    this.transfers.clear();
+  }
+  private updateTransfers(s: State): void {
+    const previous = this.loadSnapshot;
+    const current: LoadSnapshot = {
+      tick: s.tick,
+      seed: s.seed,
+      score: s.score,
+      trains: new Map(s.trains.map((t) => [t.id, {
+        from: t.from, to: t.to, line: t.line,
+        passengers: new Map(t.passengers.map((p) => [p.id, p.shape])),
+      }])),
+      queues: new Map(s.stations.map((p) => [p.id, new Set(p.queue.map((q) => q.id))])),
+    };
+    const delta = previous ? s.tick - previous.tick : 0;
+    if (!previous || previous.seed !== s.seed || delta < 0 || delta > 8) this.clearTransfers();
+    if (previous && previous.seed === s.seed && delta > 0 && delta <= 8) {
+      let delivered = Math.max(0, s.score - previous.score);
+      for (const t of s.trains) {
+        const old = previous.trains.get(t.id);
+        if (!old || old.line !== t.line ||
+            (old.to !== null ? old.to !== t.from : old.from !== t.from)) continue;
+        const p = s.stations.find((p) => p.id === t.from);
+        if (!p) continue;
+        const start = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
+        const door = new THREE.Vector3(p.x, 1.14, p.y);
+        // Passenger IDs must move between the actual queue and this train.
+        for (const passenger of t.passengers) {
+          if (!old.passengers.has(passenger.id) &&
+              previous.queues.get(t.from)?.has(passenger.id) &&
+              !current.queues.get(t.from)?.has(passenger.id))
+            this.addTransfer(passenger.id, passenger.shape, 'board', start, door, s.tick);
+        }
+        const removed = [...old.passengers].filter(([id]) =>
+          !current.trains.get(t.id)!.passengers.has(id));
+        // A transferred ID is in the station queue; a delivered ID matches
+        // the station shape and consumes one of the observed score increments.
+        for (const [id, shape] of removed) {
+          if (current.queues.get(t.from)?.has(id))
+            this.addTransfer(id, shape, 'alight', door, start, s.tick);
+          else if (shape === p.shape && delivered > 0) {
+            this.addTransfer(id, shape, 'alight', door, start, s.tick);
+            delivered--;
+          }
+        }
+      }
+    }
+    // No simulated passengers are added; these are visual echoes of observed ID changes.
+    for (const transfer of [...this.activeTransfers]) {
+      const progress = (s.tick - transfer.tick) / 5;
+      if (progress >= 1) {
+        this.transfers.remove(transfer.sprite);
+        disposeBadge(transfer.sprite);
+        this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
+      } else {
+        transfer.sprite.position.copy(transfer.start).lerp(transfer.end, Math.max(0, progress));
+      }
+    }
+    this.loadSnapshot = current;
+  }
+  private addTransfer(
+    passengerId: number, shape: Shape, direction: 'board' | 'alight',
+    start: THREE.Vector3, end: THREE.Vector3, tick: number,
+  ): void {
+    const sprite = transferMarker(shape);
+    sprite.userData = { passengerId, direction };
+    this.transfers.add(sprite);
+    this.activeTransfers.push({ sprite, start, end, tick });
+  }
   render(s: State, selectedLine = 0): void {
+    this.updateTransfers(s);
     if (this.city !== s.city) this.buildEnvironment(s.city);
     const frameKey = JSON.stringify(s.stations.map((p) => [p.x, p.y]));
     if (!this.manualCamera && frameKey !== this.frameKey) {
@@ -459,6 +624,8 @@ export class MetroRenderer {
     for (const [id, t] of this.trains)
       if (!trainIds.has(id)) {
         this.scene.remove(t.group);
+        const card = t.group.getObjectByName('train-load');
+        if (card instanceof THREE.Sprite) disposeBadge(card);
         disposeGroup(t.group);
         this.trains.delete(id);
       }
@@ -467,15 +634,28 @@ export class MetroRenderer {
       if (!entry || entry.carriages !== t.carriages || entry.line !== t.line) {
         if (entry) {
           this.scene.remove(entry.group);
+          const card = entry.group.getObjectByName('train-load');
+          if (card instanceof THREE.Sprite) disposeBadge(card);
           disposeGroup(entry.group);
         }
         entry = {
           group: trainModel(LINE_COLORS[t.line], t.carriages),
           carriages: t.carriages,
           line: t.line,
+          loadKey: '',
         };
         this.trains.set(t.id, entry);
         this.scene.add(entry.group);
+      }
+      const loadKey = JSON.stringify([t.carriages, t.passengers.map((p) => p.shape).sort()]);
+      if (entry.loadKey !== loadKey) {
+        const old = entry.group.getObjectByName('train-load');
+        if (old instanceof THREE.Sprite) {
+          entry.group.remove(old);
+          disposeBadge(old);
+        }
+        entry.group.add(trainLoadCard(t.passengers, t.carriages));
+        entry.loadKey = loadKey;
       }
       const a = station(s, t.from),
         b = t.to !== null ? station(s, t.to) : a,
@@ -506,11 +686,17 @@ export class MetroRenderer {
   }
   dispose(): void {
     this.observer.disconnect();
+    this.clearTransfers();
+    this.loadSnapshot = null;
     disposeGroup(this.environment);
     disposeGroup(this.tracks);
     disposeGroup(this.preview);
     for (const g of this.stations.values()) disposeGroup(g);
-    for (const t of this.trains.values()) disposeGroup(t.group);
+    for (const t of this.trains.values()) {
+      const card = t.group.getObjectByName('train-load');
+      if (card instanceof THREE.Sprite) disposeBadge(card);
+      disposeGroup(t.group);
+    }
     this.renderer.dispose();
     this.canvas.remove();
   }

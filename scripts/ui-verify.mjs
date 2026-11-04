@@ -27,6 +27,9 @@ try {
   await page.locator('#station-detail').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#station-detail').isVisible(), true, 'station information opens contextually');
   assert.match(await page.locator('#station-detail').innerText(), /人候车/);
+  await page.click('#help');
+  assert.equal(await page.locator('#help-dialog').isVisible(), true);
+  await page.click('#help-close');
   await page.click('#inspector-close');
   assert.equal(await page.locator('#inspector').isVisible(), false);
   await page.click('#line-tools-toggle');
@@ -110,6 +113,12 @@ try {
   await mobile.click('#line-tools-toggle');
   assert.equal(await mobile.locator('#add-train').isVisible(), true);
   await mobile.click('#line-tools-close');
+  assert.equal(await mobile.locator('#help').isVisible(), true, 'mobile help entry stays discoverable');
+  await mobile.click('#help');
+  assert.equal(await mobile.locator('#help-dialog').isVisible(), true);
+  await mobile.click('#help-close');
+  const mobileStationTarget = await mobile.locator('.station-label').first().boundingBox();
+  assert.ok(mobileStationTarget.width >= 44 && mobileStationTarget.height >= 44, 'station touch target is 44px');
   await mobile.setViewportSize({ width: 320, height: 640 });
   const narrow = await mobile.evaluate(() => ({
     overflow: document.documentElement.scrollWidth - innerWidth,

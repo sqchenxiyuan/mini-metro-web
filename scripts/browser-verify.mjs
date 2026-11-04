@@ -121,8 +121,11 @@ try {
   );
   await page.locator('#import-file').setInputFiles(`${output}/browser-recording.json`);
   await page.waitForFunction(() => window.metro.controller.mode === 'replay');
-  await page.locator('#timeline').fill('600');
-  await page.locator('#timeline').dispatchEvent('input');
+  await page.locator('#timeline').evaluate((slider) => {
+    slider.value = '600';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(() => window.metro.getState().tick === 600);
   assert.equal(await page.evaluate(() => window.metro.getState().tick), 600);
   await page.locator('#decision-list [data-decision="0"]').click();
   await page.locator('#jump-decision').click();

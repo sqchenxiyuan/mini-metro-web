@@ -1,4 +1,45 @@
-/* Keep the toy-like station geometry; let the network occupy the screen. */
+#station-layer,
+#train-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+#train-layer { z-index: 5; }
+.train-badge {
+  position: absolute;
+  transform: translate(-50%, -155%);
+  min-width: 34px;
+  min-height: 25px;
+  padding: 2px 5px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: #fffaf6ee;
+  color: #493c55;
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: auto;
+  box-shadow: 0 1px 7px #36264233;
+}
+.train-badge.full { background: #ffd7df; }
+.train-detail {
+  position: absolute;
+  z-index: 11;
+  top: 54px;
+  right: 16px;
+  width: min(280px, calc(100% - 32px));
+  padding: 13px 14px;
+  border: 1px solid #d7c4e2;
+  border-radius: 12px;
+  background: #fffaf6f7;
+  box-shadow: 0 8px 22px #36264226;
+  font-size: 12px;
+}
+.train-detail p { margin: 8px 0 0; line-height: 1.5; }
+.train-detail button { float: right; padding: 2px 7px; }
+.train-destinations { display: block; font-size: 10px; }
+@media (max-width: 650px) {
+  .train-badge { min-width: 44px; min-height: 35px; font-size: 10px; }
+}
 .creative-shapes {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -345,6 +386,19 @@ h1 {
   margin-top: 3px;
   flex-shrink: 0;
 }
+.crowd-countdown {
+  display: block;
+  margin-top: 3px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  background: #fbe5e9;
+  color: #8f354a;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+}
+.station-label:not(.crowded) .crowd-countdown { opacity: .66; }
 .right-panel {
   position: absolute;
   z-index: 9;
@@ -617,8 +671,19 @@ input, select { accent-color: #a383bd; }
     font-size: 11px;
   }
   .header-actions .icon-button {
-    display: none;
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
   }
+  .station-label {
+    width: 44px;
+    height: 44px;
+  }
+  .station-label .passengers { margin-top: 27px; }
+  .crowd-countdown { display: block; }
   .workspace {
     display: block;
     height: calc(100dvh - 136px);
@@ -800,6 +865,9 @@ input, select { accent-color: #a383bd; }
     min-width: 44px;
     min-height: 44px;
     padding: 0 4px;
+  }
+  .header-actions .icon-button {
+    display: inline-grid;
   }
   .line-list {
     max-width: calc(100vw - 100px);

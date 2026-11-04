@@ -19,6 +19,7 @@ import {
   segments,
   stationCapacity,
   trackPoints,
+  trackPosition,
   tunnelsUsed,
 } from './rules';
 import { dispatcherPolicy } from './agent';
@@ -46,7 +47,8 @@ app.innerHTML = `
   </aside>
   <section class="map-panel" aria-label="地铁地图">
     <div class="map-heading"><div><span class="live-dot"></span><span id="map-status">准备出发</span></div><span id="week-label">第 1 周 · 星期一</span></div>
-    <div id="stage"><div id="station-layer"></div></div>
+    <div id="stage"><div id="station-layer"></div><div id="train-layer"></div></div>
+    <div id="train-detail" class="train-detail" hidden></div>
     <div class="map-tools"><button id="zoom-out" title="缩小">−</button><button id="zoom-reset" title="恢复视野">⌂</button><button id="zoom-in" title="放大">＋</button><button id="screenshot" title="保存地图截图">▧</button></div>
     <div id="map-hint" class="map-hint"><span>拖过车站，连起第一条线路。</span><button id="sample-route">示范 ↗</button></div>
     <div id="toast" role="status"></div>
@@ -79,6 +81,7 @@ app.innerHTML = `
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $('stage'),
   layer = $('station-layer'),
+  trainLayer = $('train-layer'),
   controller = new MetroController(),
   renderer = new MetroRenderer(stage),
   audio = new MetroAudio();
@@ -96,6 +99,7 @@ let selectedStation: number | null = null,
   lineKey = '',
   trainKey = '',
   detailKey = '',
+  selectedTrain: number | null = null,
   decisionKey = '',
   phaseKey = '',
   lastState: State = controller.getState(),
@@ -136,6 +140,9 @@ function resetView(): void {
   nodes.clear();
   stationKey = lineKey = trainKey = detailKey = decisionKey = phaseKey = '';
   selectedStation = null;
+  selectedTrain = null;
+  $('train-detail').hidden = true;
+  trainLayer.replaceChildren();
   draft = null;
   decisionPage = 0;
   renderer.clearPreview();
@@ -241,6 +248,7 @@ function nearbySegment(x: number, y: number): number | null {
 }
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || controller.mode === 'replay') return;
+  if ((e.target as Element).closest('[data-train-id]')) return;
   const label = (e.target as Element).closest<HTMLElement>('[data-station]');
   const id = label ? Number(label.dataset.station) : nearest(e.clientX, e.clientY);
   pointerStation = id;
@@ -396,7 +404,7 @@ function update(): void {
     n.classList.toggle('selected', p.id === selectedStation);
     n.classList.toggle('crowded', p.queue.length > stationCapacity(p));
     n.style.setProperty('--crowd', `${(p.crowd / RULES.crowdTicks) * 100}%`);
-    n.setAttribute('aria-label', `${p.id} 号 ${p.shape} 车站，${p.queue.length} 人候车`);
+    n.setAttribute('aria-label', `${p.id} 号 ${p.shape} 车站，${p.queue.length} 人候车${p.crowd ? `，拥挤还剩 ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒` : ''}`);
     const content = `<span class="station-tag">${GLYPHS[p.shape]} <small>${p.id}</small>${p.interchange ? ' ✦' : ''}</span>${
       p.queue.length
         ? `<span class="passengers">${p.queue
@@ -404,8 +412,51 @@ function update(): void {
             .map((v) => `<i class="shape-${v.shape}">${GLYPHS[v.shape]}</i>`)
             .join('')}${p.queue.length > 8 ? `<b>+${p.queue.length - 8}</b>` : ''}</span>`
         : ''
-    }${p.crowd > 0 ? `<span class="crowd-bar"><i></i></span>` : ''}`;
+    }${p.crowd > 0 ? `<span class="crowd-bar"><i></i></span><span class="crowd-countdown">⚠ ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒</span>` : ''}`;
     if (n.innerHTML !== content) n.innerHTML = content;
+  }
+  const activeTrainIds = new Set(s.trains.map((t) => String(t.id)));
+  for (const badge of trainLayer.querySelectorAll<HTMLElement>('[data-train-id]'))
+    if (!activeTrainIds.has(badge.dataset.trainId!)) badge.remove();
+  for (const t of s.trains) {
+    let badge = trainLayer.querySelector<HTMLButtonElement>(`[data-train-id="${t.id}"]`);
+    if (!badge) {
+      badge = document.createElement('button');
+      badge.type = 'button';
+      badge.className = 'train-badge';
+      badge.dataset.trainId = String(t.id);
+      trainLayer.append(badge);
+    }
+    const a = s.stations.find((p) => p.id === t.from)!,
+      b = t.to === null ? a : s.stations.find((p) => p.id === t.to)!,
+      position = trackPosition(a, b, t.progress),
+      point = renderer.project(position.x, position.y, 0.9),
+      capacity = RULES.capacity * (1 + t.carriages);
+    badge.style.left = `${point.x}px`;
+    badge.style.top = `${point.y}px`;
+    badge.style.setProperty('--line', LINE_COLORS[t.line]);
+    badge.textContent = `${t.passengers.length}/${capacity}`;
+    badge.setAttribute('aria-label', `${t.id} 号列车，${t.passengers.length}/${capacity} 人，点击查看目的地`);
+    badge.classList.toggle('full', t.passengers.length >= capacity);
+  }
+  if (selectedTrain !== null) {
+    const t = s.trains.find((item) => item.id === selectedTrain);
+    if (!t) selectedTrain = null;
+    const detail = $('train-detail');
+    detail.hidden = !t;
+    if (t) {
+      const capacity = RULES.capacity * (1 + t.carriages),
+        destinations = SHAPES.map((shape) => ({ shape, count: t.passengers.filter((p) => p.shape === shape).length }))
+          .filter((item) => item.count)
+          .map((item) => `${GLYPHS[item.shape]} ${item.count}`).join(' · '),
+        shapes = t.passengers.map((p) => p.shape).join(','),
+        key = JSON.stringify([t.id, capacity, shapes]);
+      if (detail.dataset.key !== key) {
+        detail.dataset.key = key;
+        detail.dataset.shapes = shapes;
+        detail.innerHTML = `<strong>▰ ${t.id} 号列车 · ${t.passengers.length}/${capacity} 人</strong><button type="button" id="train-detail-close" aria-label="收起列车详情">×</button><p>${t.passengers.length ? '车上目的地：' + destinations : '当前空车'}</p>`;
+      }
+    }
   }
   if (performance.now() - uiAt < 100) return;
   uiAt = performance.now();
@@ -480,14 +531,14 @@ function update(): void {
   $('redraw').classList.toggle('armed', redrawing);
   const ts = s.trains.filter((t) => t.line === l.id),
     tk = JSON.stringify(
-      ts.map((t) => [t.id, t.carriages, t.passengers.length, t.retiring, t.moveTo]),
+      ts.map((t) => [t.id, t.carriages, t.passengers.map((p) => p.shape), t.retiring, t.moveTo]),
     );
   if (tk !== trainKey) {
     trainKey = tk;
     $('train-list').innerHTML = ts
       .map(
         (t) =>
-          `<div class="train-row"><span><b>▰ ${t.id}</b> <small>${t.passengers.length}/${6 * (1 + t.carriages)}${t.retiring ? ' 回库' : t.moveTo ? ' 调动' : ''}</small></span><div><button data-car="${t.id}" title="加挂车厢">＋</button><button data-uncar="${t.id}" title="拆卸车厢">−</button><button data-move="${t.id}" title="调往下一条已运营线路">⇄</button><button data-retire="${t.id}" title="回收列车">↩</button></div></div>`,
+          `<div class="train-row"><span><b>▰ ${t.id}</b> <small>${t.passengers.length}/${RULES.capacity * (1 + t.carriages)}${t.retiring ? ' 回库' : t.moveTo ? ' 调动' : ''}</small><span class="train-destinations" aria-label="车上乘客目的地">${t.passengers.length ? SHAPES.map((shape) => ({ shape, count: t.passengers.filter((p) => p.shape === shape).length })).filter((item) => item.count).map((item) => `${GLYPHS[item.shape]}${item.count}`).join(' ') : '空车'}</span></span><div><button data-car="${t.id}" title="加挂车厢">＋</button><button data-uncar="${t.id}" title="拆卸车厢">−</button><button data-move="${t.id}" title="调往下一条已运营线路">⇄</button><button data-retire="${t.id}" title="回收列车">↩</button></div></div>`,
       )
       .join('');
   }
@@ -851,6 +902,19 @@ app.addEventListener('click', (e) => {
     }
   }
 });
+trainLayer.addEventListener('click', (e) => {
+  const badge = (e.target as Element).closest<HTMLElement>('[data-train-id]');
+  if (!badge) return;
+  e.stopPropagation();
+  selectedTrain = Number(badge.dataset.trainId);
+  uiAt = 0;
+  update();
+});
+$('train-detail').addEventListener('click', (e) => {
+  if (!(e.target as Element).closest('#train-detail-close')) return;
+  selectedTrain = null;
+  $('train-detail').hidden = true;
+});
 stage.addEventListener('click', (e) => {
   if (!placing) return;
   const rect = stage.getBoundingClientRect(),
@@ -876,6 +940,8 @@ window.addEventListener('keydown', (e) => {
     draft = null;
     redrawing = false;
     placing = null;
+    selectedTrain = null;
+    $('train-detail').hidden = true;
     renderer.clearPreview();
     setInspector(false);
     setLineTools(false);
