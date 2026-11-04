@@ -250,7 +250,7 @@ function nearbySegment(x: number, y: number): number | null {
 }
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || controller.mode === 'replay') return;
-  if ((e.target as Element).closest('[data-train-id]')) return;
+  if ((e.target as Element).closest('[data-train-id], [data-train-group]')) return;
   const label = (e.target as Element).closest<HTMLElement>('[data-station]');
   const id = label ? Number(label.dataset.station) : nearest(e.clientX, e.clientY);
   pointerStation = id;
@@ -445,7 +445,7 @@ function update(): void {
     badge.style.left = `${point.x}px`;
     badge.style.top = `${point.y}px`;
     badge.style.setProperty('--line', LINE_COLORS[t.line]);
-    badge.textContent = `${t.passengers.length}/${capacity}`;
+    badge.textContent = '';
     badge.setAttribute('aria-label', `${t.id} 号列车，${t.passengers.length}/${capacity} 人，点击查看目的地`);
     badge.classList.toggle('full', t.passengers.length >= capacity);
     badge.classList.toggle('train-badge-grouped', t.to === null && (stationTrains.get(t.from)?.length ?? 0) > 1);
@@ -465,7 +465,7 @@ function update(): void {
     const q = renderer.project(p.x, p.y, 0.9);
     badge.style.left = `${q.x}px`;
     badge.style.top = `${q.y}px`;
-    badge.textContent = `${group.length} 辆`;
+    badge.textContent = '▰';
     badge.setAttribute('aria-label', `${p.id} 号车站有 ${group.length} 辆停靠列车，点击选择`);
   }
   if (selectedTrain === null) {
@@ -1014,6 +1014,8 @@ window.addEventListener('keydown', (e) => {
     placing = null;
     selectedTrain = null;
     $('train-detail').hidden = true;
+    delete $('train-detail').dataset.groupStation;
+    delete $('train-detail').dataset.groupKey;
     renderer.clearPreview();
     setInspector(false);
     setLineTools(false);

@@ -22,9 +22,14 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-train-group]'));
   assert.equal(await page.locator('.train-badge:visible').count(), 1, 'stationary trains use one visible map badge');
   const group = page.locator('[data-train-group]');
-  assert.match(await group.innerText(), /7 辆/);
-  await group.focus();
-  await group.press('Enter');
+  assert.match(await group.getAttribute('aria-label'), /7 辆停靠列车/);
+  assert.doesNotMatch(await group.innerText(), /\d/);
+  await group.tap();
+  await page.waitForFunction(() => document.querySelectorAll('[data-train-choice]').length === 7);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#train-detail').isVisible(), false);
+  assert.equal(await page.locator('#train-detail').getAttribute('data-group-station'), null);
+  await group.tap();
   await page.waitForFunction(() => document.querySelectorAll('[data-train-choice]').length === 7);
   const choices = page.locator('[data-train-choice]');
   assert.equal(await choices.count(), 7);

@@ -32,6 +32,7 @@ try {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   await badge.waitFor({ state: 'visible' });
   assert.match(await badge.getAttribute('aria-label'), new RegExp(`${result.count}/${result.capacity}`));
+  assert.doesNotMatch(await badge.innerText(), /\d|×/);
   await badge.click();
   const detail = page.locator('#train-detail');
   await detail.waitFor({ state: 'visible' });

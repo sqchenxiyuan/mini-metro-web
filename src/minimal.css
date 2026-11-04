@@ -20,10 +20,15 @@
   pointer-events: auto;
   box-shadow: 0 1px 7px #36264233;
 }
-.train-badge.full {
-  width: max-content;
-  background: #ffd7df;
+.train-badge:not(.train-group-badge) {
+  transform: translate(-50%, -50%);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
+.train-badge:not(.train-group-badge):focus-visible { outline: 2px solid var(--line); }
+.train-badge.full { width: max-content; background: #ffd7df; }
+.train-badge:not(.train-group-badge).full { background: transparent; }
 .train-badge-grouped[hidden] { display: none; }
 .train-group-badge { --line: #786a8a; }
 .train-group-list { display: grid; gap: 5px; margin-top: 10px; max-height: min(42dvh, 260px); overflow-y: auto; }

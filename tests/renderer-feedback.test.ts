@@ -51,9 +51,6 @@ function setup() {
 function passenger(id: number, shape: 'circle' | 'triangle' | 'square') {
   return { id, shape, born: 0, transfers: 0 };
 }
-function badge(group: THREE.Group) {
-  return group.getObjectByName('train-load') as THREE.Sprite | undefined;
-}
 function transfers(renderer: MetroRenderer) {
   return (renderer as unknown as { transfers: THREE.Group }).transfers.children;
 }
@@ -73,16 +70,15 @@ describe('train load feedback', () => {
     expect(transfers(renderer).some((sprite) => sprite.userData.passengerId === 301 && sprite.userData.direction === 'board')).toBe(true);
     renderer.dispose();
   });
-  it('displays actual destination composition and capacity even on the first render', () => {
+  it('draws each destination as one roof shape, without numbers or multipliers', () => {
     const { renderer, state, train } = setup();
     state.trains[0].passengers = [passenger(101, 'triangle'), passenger(102, 'triangle'), passenger(103, 'square')];
     renderer.render(state);
-    expect(badge(train())).toBeInstanceOf(THREE.Sprite);
-    const drawn = canvases.at(-1)!.calls;
-    expect(drawn).toContainEqual(['fillText', '3 / 6', expect.any(Number), expect.any(Number)]);
-    expect(drawn).toContainEqual(['fillText', '×2', expect.any(Number), expect.any(Number)]);
-    expect(drawn).toContainEqual(['fillText', '×1', expect.any(Number), expect.any(Number)]);
-    expect(drawn.filter(([op]) => op === 'fill').length).toBeGreaterThanOrEqual(2);
+    const icons = train().children.filter((object) => object.name === 'onboard-shape');
+    expect(icons.map((icon) => icon.userData.shape)).toEqual(['triangle', 'triangle', 'square']);
+    expect((icons[0] as THREE.Mesh).material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(train().getObjectByName('train-load')).toBeUndefined();
+    expect(canvases.flatMap((canvas) => canvas.calls).filter(([op]) => op === 'fillText')).toEqual([]);
     renderer.dispose();
   });
   it('animates real boarding from the station toward the train and real alighting back', () => {
@@ -180,20 +176,28 @@ describe('train load feedback', () => {
     expect(transfers(renderer).filter((sprite) => sprite.userData.direction === 'alight')).toHaveLength(1);
     renderer.dispose();
   });
-  it('updates the card when a carriage raises capacity and disposes its texture on removal', () => {
+  it('adds one destination icon per carriage seat and removes stale icons', () => {
     const { renderer, state, train } = setup();
+    state.trains[0].carriages = 3;
+    state.trains[0].passengers = Array.from({ length: 24 }, (_, i) => passenger(200 + i, i % 2 ? 'square' : 'triangle'));
     renderer.render(state);
-    const old = badge(train())!;
-    const disposed = vi.spyOn((old.material as THREE.SpriteMaterial).map!, 'dispose');
-    state.trains[0].carriages = 1;
+    let icons = train().children.filter((object) => object.name === 'onboard-shape');
+    expect(icons).toHaveLength(24);
+    expect(icons.map((icon) => icon.userData.carriage)).toEqual(Array.from({ length: 24 }, (_, i) => Math.floor(i / 6)));
+    const oldGeometry = vi.spyOn((icons[23] as THREE.Mesh).geometry, 'dispose');
+    state.trains[0].passengers.pop();
     renderer.render(state);
-    expect(disposed).toHaveBeenCalledOnce();
-    expect(canvases.at(-1)!.calls).toContainEqual(['fillText', '0 / 12', expect.any(Number), expect.any(Number)]);
-    const next = badge(train())!;
-    const nextDispose = vi.spyOn((next.material as THREE.SpriteMaterial).map!, 'dispose');
+    icons = train().children.filter((object) => object.name === 'onboard-shape');
+    expect(icons).toHaveLength(23);
+    expect(oldGeometry).toHaveBeenCalledOnce();
+    const oldIcon = icons[0];
+    state.trains[0].passengers[0].shape = 'circle';
+    renderer.render(state);
+    expect(train().children.find((object) => object.name === 'onboard-shape' && object.userData.passengerId === 200)?.userData.shape).toBe('circle');
+    expect(train().children.includes(oldIcon)).toBe(false);
     state.trains = [];
     renderer.render(state);
-    expect(nextDispose).toHaveBeenCalledOnce();
+    expect((renderer as unknown as { trains: Map<number, unknown> }).trains.size).toBe(0);
     renderer.dispose();
   });
 });
