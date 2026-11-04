@@ -219,6 +219,40 @@ describe('shared station visual layout', () => {
     expect(zs[1] - zs[0]).toBeCloseTo(0.21, 4);
     renderer.dispose();
   });
+  it('preserves lane geometry when a hand-supplied path contains a degenerate segment', () => {
+    const { renderer } = setup();
+    const helper = renderer as unknown as { trackVertices: (points: {x:number;y:number}[], offset:number, height:number) => THREE.Vector3[] };
+    const points=[{x:0,y:0},{x:0,y:0},{x:4,y:0}];
+    const vertices=helper.trackVertices(points,0.105,0.48);
+    expect(vertices).toHaveLength(2);
+    expect(vertices[0].x).toBeCloseTo(0);
+    expect(vertices[1].x).toBeCloseTo(4);
+    renderer.dispose();
+  });
+  it('keeps train interpolation aligned when a degenerate first leg precedes a real leg', () => {
+    const { renderer, state } = setup();
+    const a = state.stations[0], b = state.stations[1];
+    a.x=0; a.y=0; b.x=4; b.y=4.0000001;
+    state.lines[0].stops=[a.id,b.id];
+    state.trains=[{id:991,line:0,from:a.id,to:b.id,progress:0.25,direction:1,dwell:0,passengers:[],carriages:0,retiring:false,moveTo:null}];
+    expect(() => renderer.render(state)).not.toThrow();
+    const group=(renderer as unknown as {trains:Map<number,{group:THREE.Group}>}).trains.get(991)!.group;
+    expect(Number.isFinite(group.position.x)).toBe(true);
+    expect(Number.isFinite(group.position.z)).toBe(true);
+    renderer.dispose();
+  });
+  it('keeps train interpolation aligned when a near-zero centerline segment is skipped', () => {
+    const { renderer, state } = setup();
+    const a = state.stations[0], b = state.stations[1];
+    a.x = 0; a.y = 0; b.x = 0.0000001; b.y = 0.0000001;
+    state.lines[0].stops = [a.id,b.id];
+    state.trains=[{id:990,line:0,from:a.id,to:b.id,progress:0.5,direction:1,dwell:0,passengers:[],carriages:0,retiring:false,moveTo:null}];
+    expect(() => renderer.render(state)).not.toThrow();
+    const group = (renderer as unknown as {trains:Map<number,{group:THREE.Group}>}).trains.get(990)!.group;
+    expect(Number.isFinite(group.position.x)).toBe(true);
+    expect(Number.isFinite(group.position.z)).toBe(true);
+    renderer.dispose();
+  });
   it('keeps an outer-lane train centered on its visible mitered bend', () => {
     const { renderer, state } = setup();
     const a = state.stations[0], b = state.stations[1];
