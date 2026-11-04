@@ -91,6 +91,20 @@ describe('transport rules', () => {
     expect(transferred).toBe(true);
     expect(s.score).toBe(1);
   });
+  it('boards the forward loop train even if a reverse train makes the opposite shortcut shorter', () => {
+    const s = quiet();
+    s.resources.tunnels = 8;
+    const [a, b, c] = s.stations;
+    a.x = 0; a.y = 0; b.x = 9; b.y = 0; c.x = 1; c.y = 0;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [a.id, b.id, c.id], loop: true }).ok).toBe(true);
+    const forward = s.trains[0];
+    expect(applyAction(s, { type: 'addTrain', line: 0, station: b.id, direction: -1 }).ok).toBe(true);
+    forward.from = a.id; forward.direction = 1; forward.dwell = 0;
+    const p = passenger(s, c.shape);
+    a.queue.push(p);
+    advance(s);
+    expect(forward.passengers.map((r) => r.id)).toContain(p.id);
+  });
   it('boards a rider toward the next stop on a one-way loop even when reverse is geographically shorter', () => {
     const s = quiet();
     s.resources.tunnels = 8;

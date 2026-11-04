@@ -468,12 +468,14 @@ export interface Route {
   line: number;
   next: number;
 }
-function graph(s: State): Map<number, Edge[]> {
+function graph(s: State, loopDirection?: { line: number; direction: 1 | -1 }): Map<number, Edge[]> {
   const g = new Map<number, Edge[]>(s.stations.map((p) => [p.id, []]));
   for (const l of s.lines) {
     // A loop has travel direction; a geometric shortcut against it is not serviceable.
-    const directions = new Set(s.trains.filter((t) => t.line === l.id && !t.retiring && !t.moveTo)
-      .map((t) => t.direction));
+    const directions = loopDirection?.line === l.id
+      ? new Set([loopDirection.direction])
+      : new Set(s.trains.filter((t) => t.line === l.id && !t.retiring && !t.moveTo)
+        .map((t) => t.direction));
     if (!directions.size) continue;
     for (const [a, b] of segments(l)) {
       const cost = trackLength(station(s, a), station(s, b)) / RULES.speed + 0.7;
@@ -518,10 +520,13 @@ export function findRoute(
 }
 function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?: (type: 'deliver' | 'transferOut' | 'board', t: Train, passenger: Passenger) => void): number {
   const p = station(s, t.from);
+  // At a loop stop, boarding is evaluated for this train's direction, not
+  // the shorter reverse trip offered by a different train on the same line.
+  const localGraph = s.lines[t.line]?.loop ? graph(s, { line: t.line, direction: t.direction }) : g;
   const cache = new Map<string, Route | null>();
   const route = (shape: Shape, line: number) => {
     const key = `${shape}:${line}`;
-    if (!cache.has(key)) cache.set(key, findRoute(s, p.id, shape, line, g));
+    if (!cache.has(key)) cache.set(key, findRoute(s, p.id, shape, line, localGraph));
     return cache.get(key);
   };
   for (let i = 0; i < t.passengers.length; i++) {
