@@ -257,9 +257,14 @@ describe('shared station visual layout', () => {
     renderer.render(state);
     const colors = LINE_COLORS.slice(0, 2).map((c) => new THREE.Color(c).getHexString());
     const paths = tracks(renderer).filter((m) => colors.includes((m.material as THREE.MeshStandardMaterial).color.getHexString()))
-      .map((m) => ({ color: (m.material as THREE.MeshStandardMaterial).color.getHexString(),
-        a: (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0),
-        b: (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(1) }));
+      .flatMap((m) => {
+        const path = (m.geometry as THREE.TubeGeometry).parameters.path;
+        return path instanceof THREE.CurvePath
+          ? path.curves.map((segment) => ({ color: (m.material as THREE.MeshStandardMaterial).color.getHexString(),
+            a: segment.getPoint(0), b: segment.getPoint(1) }))
+          : [{ color: (m.material as THREE.MeshStandardMaterial).color.getHexString(),
+            a: path.getPoint(0), b: path.getPoint(1) }];
+      });
     const atMid = paths.filter((p) => Math.min(p.a.x, p.b.x) < 3 && Math.max(p.a.x, p.b.x) > 3);
     expect(new Set(atMid.map((p) => p.color)).size).toBe(2);
     const z = atMid.map((p) => p.a.z + (p.b.z - p.a.z) * ((3 - p.a.x) / (p.b.x - p.a.x))).sort((a,b) => a-b);
@@ -358,6 +363,16 @@ describe('shared station visual layout', () => {
     expect(Number.isFinite(group.position.z)).toBe(true);
     renderer.dispose();
   });
+  it('draws one continuous rail through a vertical-to-diagonal bend', () => {
+    const { renderer } = setup();
+    const helper = renderer as unknown as { drawLane: (points: { x: number; y: number }[], offset: number, radius: number,
+      color: string, group: THREE.Group, height: number) => void };
+    const group = new THREE.Group();
+    helper.drawLane([{ x: 0, y: 0 }, { x: 0, y: 3 }, { x: 3, y: 6 }], 0, 0.105, '#e98391', group, 0.43);
+    expect(group.children).toHaveLength(1);
+    expect((group.children[0] as THREE.Mesh).geometry).toBeInstanceOf(THREE.TubeGeometry);
+    renderer.dispose();
+  });
   it('keeps an outer-lane train centered on its visible mitered bend', () => {
     const { renderer, state } = setup();
     const a = state.stations[0], b = state.stations[1];
@@ -370,8 +385,8 @@ describe('shared station visual layout', () => {
     const color = new THREE.Color(LINE_COLORS[6]).getHexString();
     const rails = tracks(renderer).filter((m) =>
       (m.material as THREE.MeshStandardMaterial).color.getHexString() === color);
-    expect(rails).toHaveLength(2);
-    const bend = (rails[0].geometry as THREE.TubeGeometry).parameters.path.getPoint(1);
+    expect(rails).toHaveLength(1);
+    const bend = ((rails[0].geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>).curves[0].getPoint(1);
     const train = (renderer as unknown as { trains: Map<number, { group: THREE.Group }> }).trains.get(990)!.group.position;
     expect(Math.hypot(train.x - bend.x, train.z - bend.z)).toBeLessThan(0.105);
     renderer.dispose();
@@ -387,8 +402,8 @@ describe('shared station visual layout', () => {
     renderer.render(state);
     const colored = tracks(renderer).filter((m) =>
       (m.material as THREE.MeshStandardMaterial).color.getHexString() === new THREE.Color(LINE_COLORS[0]).getHexString());
-    expect(colored).toHaveLength(2);
-    const joint = (colored[0].geometry as THREE.TubeGeometry).parameters.path.getPoint(1);
+    expect(colored).toHaveLength(1);
+    const joint = ((colored[0].geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>).curves[0].getPoint(1);
     const bend = { x: b.x - Math.abs(b.y - a.y), y: a.y };
     const offset = -0.105;
     const normalA = { x: 0, y: -1 };

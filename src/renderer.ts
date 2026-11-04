@@ -489,11 +489,10 @@ export class MetroRenderer {
   ): void {
     const vertices = this.trackVertices(points, offset, height, endpointOffsets);
     if (vertices.length < 2) return;
-    // Each offset segment remains straight through the station entrance.
-    for (let i = 1; i < vertices.length; i++) {
-      const path = new THREE.LineCurve3(vertices[i - 1], vertices[i]);
-      group.add(mesh(new THREE.TubeGeometry(path, 1, radius, 10, false), MAT(color)));
-    }
+    const path = new THREE.CurvePath<THREE.Vector3>();
+    for (let i = 1; i < vertices.length; i++)
+      path.add(new THREE.LineCurve3(vertices[i - 1], vertices[i]));
+    group.add(mesh(new THREE.TubeGeometry(path, Math.max(2, (vertices.length - 1) * 4), radius, 10, false), MAT(color)));
   }
   private lanePosition(
     layout: ReturnType<typeof deriveTrackLayout> | null, lineId: number,
