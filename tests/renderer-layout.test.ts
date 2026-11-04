@@ -212,6 +212,30 @@ describe('shared station visual layout', () => {
     expect(joint.z).toBeCloseTo(bend.y + (normalA.y + normalB.y) * factor, 4);
     renderer.dispose();
   });
+  it('keeps trains on their own colored rail when station ID order opposes spatial order', () => {
+    const { renderer, state } = setup();
+    const a = state.stations[0], b = state.stations[1];
+    a.x = 5; a.y = 0; b.x = -5; b.y = 0;
+    state.lines = [
+      { id: 0, stops: [a.id, b.id], loop: false },
+      { id: 1, stops: [b.id, a.id], loop: false },
+    ];
+    state.trains = state.lines.map((line) => ({ id: 200 + line.id, line: line.id,
+      from: line.stops[0], to: line.stops[1], progress: 0.5,
+      direction: 1 as const, dwell: 0, passengers: [], carriages: 0, retiring: false, moveTo: null }));
+    renderer.render(state);
+    const meshes = tracks(renderer);
+    const trains = (renderer as unknown as { trains: Map<number, { group: THREE.Group }> }).trains;
+    for (const line of state.lines) {
+      const color = new THREE.Color(LINE_COLORS[line.id]).getHexString();
+      const mesh = meshes.find((m) => (m.material as THREE.MeshStandardMaterial).color.getHexString() === color)!;
+      const path = (mesh.geometry as THREE.TubeGeometry).parameters.path;
+      const train = trains.get(200 + line.id)!.group;
+      expect(train.position.z).toBeCloseTo(path.getPoint(0).z, 4);
+      expect(train.position.z).toBeCloseTo(path.getPoint(1).z, 4);
+    }
+    renderer.dispose();
+  });
   it('places trains on their own visible color lane when seven lines share a segment', () => {
     const { renderer, state } = setup();
     const a = state.stations[0].id, b = state.stations[1].id;
