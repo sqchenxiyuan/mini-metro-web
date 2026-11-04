@@ -334,9 +334,11 @@ export class MetroRenderer {
     this.zoom = 1;
   }
   private resize(): void {
+    const previous = this.bounds;
     const { width, height } = this.container.getBoundingClientRect();
     this.bounds = { width: Math.max(1, width), height: Math.max(1, height) };
-    this.renderer.setSize(this.bounds.width, this.bounds.height);
+    if (this.bounds.width !== previous.width || this.bounds.height !== previous.height)
+      this.renderer.setSize(this.bounds.width, this.bounds.height);
     const aspect = this.bounds.width / this.bounds.height,
       half = Math.max(this.frameSize.height / 2, this.frameSize.width / aspect / 2) / this.zoom;
     this.camera.left = -half * aspect;

@@ -13,7 +13,7 @@ vi.mock('three', async (original) => {
     toneMapping = 0;
     toneMappingExposure = 0;
     setPixelRatio() {}
-    setSize() {}
+    setSize = vi.fn();
     setClearColor() {}
     render() {}
     dispose() {}
@@ -79,6 +79,30 @@ describe('automatic camera framing', () => {
     expect(Math.abs(frame() - before)).toBeLessThan(0.25);
     const centerAfter = (renderer as unknown as { center: { x: number; y: number } }).center;
     expect(Math.hypot(centerAfter.x - centerBefore.x, centerAfter.y - centerBefore.y)).toBeLessThan(0.25);
+    renderer.dispose();
+  });
+  it('updates projection without reallocating the WebGL drawing buffer during the lead-in', () => {
+    const { renderer, state } = setup();
+    state.nextStation = 1680;
+    renderer.render(state);
+    const webgl = (renderer as unknown as { renderer: { setSize: ReturnType<typeof vi.fn> } }).renderer;
+    webgl.setSize.mockClear();
+    for (const tick of [state.nextStation - 180, state.nextStation - 120, state.nextStation - 60]) {
+      state.elapsed = tick;
+      renderer.render(state);
+    }
+    expect(webgl.setSize).not.toHaveBeenCalled();
+    renderer.dispose();
+  });
+  it('resizes the drawing buffer when the container itself changes size', () => {
+    let width = 1200;
+    const container = { append: vi.fn(), getBoundingClientRect: () => ({ width, height: 800 }) };
+    const renderer = new MetroRenderer(container as unknown as HTMLElement);
+    const webgl = (renderer as unknown as { renderer: { setSize: ReturnType<typeof vi.fn> } }).renderer;
+    webgl.setSize.mockClear();
+    width = 900;
+    (renderer as unknown as { resize: () => void }).resize();
+    expect(webgl.setSize).toHaveBeenCalledWith(900, 800);
     renderer.dispose();
   });
   it('restores the opening field of view for a new game after an expanded late game', () => {
