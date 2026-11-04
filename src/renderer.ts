@@ -250,6 +250,10 @@ export class MetroRenderer {
   private manualCamera = false;
   private frameKey = '';
   private frameSize = { width: 22, height: 14 };
+  private cameraSpawn = -1;
+  private cameraLeadBase = { width: 22, height: 14 };
+  private cameraCenterTarget = { x: 0, y: 0 };
+  private cameraCenterStart = { x: 0, y: 0 };
   private previousTrainAnchors = new Map<number, THREE.Vector3>();
   private center = { x: 0, y: 0 };
   private bounds = { width: 1, height: 1 };
@@ -322,6 +326,11 @@ export class MetroRenderer {
   resetCamera(): void {
     this.manualCamera = false;
     this.frameKey = '';
+    this.frameSize = { width: 19, height: 13 };
+    this.cameraLeadBase = { ...this.frameSize };
+    this.cameraSpawn = -1;
+    this.cameraCenterTarget = { x: 0, y: 0 };
+    this.cameraCenterStart = { x: 0, y: 0 };
     this.zoom = 1;
   }
   private resize(): void {
@@ -628,14 +637,43 @@ export class MetroRenderer {
         maxX = Math.max(...xs),
         minY = Math.min(...ys),
         maxY = Math.max(...ys);
-      this.center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      this.cameraCenterTarget = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      if (this.cameraSpawn < 0 || s.mode === 'creative') this.center = { ...this.cameraCenterTarget };
       this.frameSize = {
-        width: Math.max(19, maxX - minX + 9),
-        height: Math.max(13, (maxY - minY) * 0.8 + 9),
+        width: Math.max(this.frameSize.width, 19, maxX - minX + 9),
+        height: Math.max(this.frameSize.height, 13, (maxY - minY) * 0.8 + 9),
       };
       this.camera.position.set(this.center.x, 32, 24 + this.center.y);
       this.camera.lookAt(this.center.x, 0, this.center.y);
       this.resize();
+    }
+    if (!this.manualCamera && s.mode !== 'creative' && s.stations.length < RULES.maxStations) {
+      if (this.cameraSpawn !== s.nextStation) {
+        this.cameraSpawn = s.nextStation;
+        this.cameraLeadBase = { ...this.frameSize };
+        this.cameraCenterStart = { ...this.center };
+      }
+      // Expand ahead of the station spawn, never jump or shrink at arrival.
+      // The rule generator uses this bounded envelope; the actual point stays unknown.
+      const phase = Math.max(0, Math.min(1, 1 - (s.nextStation - s.elapsed) / 240));
+      const cx = this.cameraCenterStart.x + (this.cameraCenterTarget.x - this.cameraCenterStart.x) * phase;
+      const cy = this.cameraCenterStart.y + (this.cameraCenterTarget.y - this.cameraCenterStart.y) * phase;
+      if (cx !== this.center.x || cy !== this.center.y) {
+        this.center = { x: cx, y: cy };
+        this.camera.position.set(cx, 32, 24 + cy);
+        this.camera.lookAt(cx, 0, cy);
+      }
+      const range = Math.min(1, 0.48 + (s.nextStation / RULES.weekTicks) * 0.12);
+      const edgeX = 15.5 * range + 0.5;
+      const edgeY = 9.3 * range + 0.5;
+      const targetWidth = Math.max(this.cameraLeadBase.width, 2 * (edgeX + Math.abs(this.center.x)) + 9);
+      const targetHeight = Math.max(this.cameraLeadBase.height, 2 * (edgeY + Math.abs(this.center.y)) * 0.8 + 9);
+      const width = this.cameraLeadBase.width + (targetWidth - this.cameraLeadBase.width) * phase;
+      const height = this.cameraLeadBase.height + (targetHeight - this.cameraLeadBase.height) * phase;
+      if (width > this.frameSize.width || height > this.frameSize.height) {
+        this.frameSize = { width: Math.max(width, this.frameSize.width), height: Math.max(height, this.frameSize.height) };
+        this.resize();
+      }
     }
     const live = new Set(s.stations.map((p) => p.id));
     for (const [id, g] of this.stations)

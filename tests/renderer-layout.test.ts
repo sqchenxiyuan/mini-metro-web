@@ -50,6 +50,87 @@ function trackColors(renderer: MetroRenderer) {
   return tracks(renderer).map((item) => (item.material as THREE.MeshStandardMaterial).color.getHexString());
 }
 
+describe('automatic camera framing', () => {
+  it('widens before the scheduled spawn so even an edge station appears inside the view without a spawn-time snap', () => {
+    const { renderer, state } = setup();
+    state.nextStation = 1680;
+    const frame = () => (renderer as unknown as { frameSize: { width: number; height: number } }).frameSize.width;
+    renderer.render(state);
+    const start = frame();
+    state.elapsed = state.nextStation - 120;
+    renderer.render(state);
+    const middle = frame();
+    state.elapsed = state.nextStation - 1;
+    renderer.render(state);
+    const before = frame();
+    const centerBefore = { ...(renderer as unknown as { center: { x: number; y: number } }).center };
+    const edge = { x: 15.5 * (0.48 + state.nextStation / 1680 * 0.12), y: 9.3 * (0.48 + state.nextStation / 1680 * 0.12) };
+    const projected = renderer.project(edge.x, edge.y);
+    expect(middle).toBeGreaterThan(start);
+    expect(before).toBeGreaterThan(middle);
+    expect(projected.x).toBeGreaterThan(0);
+    expect(projected.x).toBeLessThan(1200);
+    expect(projected.y).toBeGreaterThan(0);
+    expect(projected.y).toBeLessThan(800);
+    state.elapsed = state.nextStation;
+    state.nextStation += 400;
+    state.stations.push({ ...state.stations[0], id: 900, ...edge, queue: [] });
+    renderer.render(state);
+    expect(Math.abs(frame() - before)).toBeLessThan(0.25);
+    const centerAfter = (renderer as unknown as { center: { x: number; y: number } }).center;
+    expect(Math.hypot(centerAfter.x - centerBefore.x, centerAfter.y - centerBefore.y)).toBeLessThan(0.25);
+    renderer.dispose();
+  });
+  it('restores the opening field of view for a new game after an expanded late game', () => {
+    const { renderer, state } = setup();
+    state.nextStation = 1680;
+    renderer.render(state);
+    state.elapsed = state.nextStation - 1;
+    renderer.render(state);
+    const expanded = (renderer as unknown as { frameSize: { width: number } }).frameSize.width;
+    renderer.resetCamera();
+    const fresh = createState();
+    renderer.render(fresh);
+    const opening = (renderer as unknown as { frameSize: { width: number } }).frameSize.width;
+    expect(opening).toBeLessThan(expanded);
+    expect(opening).toBe(19);
+    renderer.dispose();
+  });
+  it('keeps the whole spawn envelope inside the portrait viewport before spawning', () => {
+    const container = { append: vi.fn(), getBoundingClientRect: () => ({ width: 390, height: 708 }) };
+    const renderer = new MetroRenderer(container as unknown as HTMLElement);
+    const state = createState();
+    state.nextStation = 1680;
+    renderer.render(state);
+    state.elapsed = state.nextStation - 1;
+    renderer.render(state);
+    const range = 0.48 + (state.nextStation / 1680) * 0.12;
+    for (const x of [-15.5 * range, 15.5 * range])
+      for (const y of [-9.3 * range, 9.3 * range]) {
+        const p = renderer.project(x, y);
+        expect(p.x).toBeGreaterThan(0);
+        expect(p.x).toBeLessThan(390);
+        expect(p.y).toBeGreaterThan(0);
+        expect(p.y).toBeLessThan(708);
+      }
+    renderer.dispose();
+  });
+  it('does not undo a player camera adjustment while waiting for a station', () => {
+    const { renderer, state } = setup();
+    renderer.render(state);
+    renderer.setZoom(1.4);
+    renderer.pan(40, 30);
+    const before = { size: { ...(renderer as unknown as { frameSize: { width: number; height: number } }).frameSize },
+      center: { ...(renderer as unknown as { center: { x: number; y: number } }).center } };
+    state.elapsed = state.nextStation - 1;
+    renderer.render(state);
+    expect((renderer as unknown as { frameSize: { width: number; height: number } }).frameSize).toEqual(before.size);
+    expect((renderer as unknown as { center: { x: number; y: number } }).center).toEqual(before.center);
+    expect(renderer.getZoom()).toBe(1.4);
+    renderer.dispose();
+  });
+});
+
 describe('shared station visual layout', () => {
   it('draws seven ordered touching colors over one continuous pale backing when seven lines share a segment in either direction', () => {
     const { renderer, state } = setup();
