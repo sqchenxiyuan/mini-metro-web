@@ -15,6 +15,8 @@ export interface TrackSegment {
   to: number;
   points: { x: number; y: number }[];
   lanes: TrackLane[];
+  /** Optional endpoint-specific offsets when two dense station sectors disagree. */
+  endpointOffsets?: { from: number; to: number };
   /** Radius for a single white underlay centered on the shared path. */
   underlayRadius: number;
 }
@@ -83,6 +85,23 @@ export function deriveTrackLayout(state: State): TrackLayout {
     const orientation = anchor.from === approach.stationId ? 1 : -1;
     approach.lanes.forEach((lane, index) => { lane.offset = orientation * (index - (approach.lanes.length - 1) / 2) * 0.21; });
     approach.underlayRadius = approach.lanes.length * 0.105 + 0.045;
+  }
+  for (const segment of result) {
+    if (segment.lanes.length !== 1) continue; // A truly shared edge keeps its existing seven-line order.
+    const lineId = segment.lanes[0].lineId;
+    const findBranchOffset = (stationId: number, neighborId: number) => {
+      const approach = orderedApproaches.find((item) =>
+        item.stationId === stationId && item.lanes.some((lane) => lane.lineId === lineId && lane.neighborId === neighborId));
+      if (!approach || new Set(approach.lanes.map((lane) => lane.neighborId)).size < 2) return null;
+      // Approach offsets are measured in the outgoing station tangent's local frame.
+      const lane = approach.lanes.find((item) => item.lineId === lineId && item.neighborId === neighborId)!;
+      return stationId === segment.from ? lane.offset : -lane.offset;
+    };
+    const fromOffset = findBranchOffset(segment.from, segment.to);
+    const toOffset = findBranchOffset(segment.to, segment.from);
+    segment.lanes[0].offset = fromOffset ?? toOffset ?? 0;
+    if (fromOffset !== null && toOffset !== null && Math.abs(fromOffset - toOffset) > 1e-6)
+      segment.endpointOffsets = { from: fromOffset, to: toOffset };
   }
   return { segments: result, approaches: orderedApproaches };
 }

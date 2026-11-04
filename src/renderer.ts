@@ -464,15 +464,23 @@ export class MetroRenderer {
   private drawLane(
     points: { x: number; y: number }[], offset: number, radius: number,
     color: string, group: THREE.Group, height: number,
+    endpointOffsets?: { from: number; to: number },
   ): void {
     const vertices: THREE.Vector3[] = [];
+    const startOffset = endpointOffsets?.from ?? offset;
+    const endOffset = endpointOffsets?.to ?? offset;
+    const totalLength = points.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - points[i].x, p.y - points[i].y), 0);
+    let traveled = 0;
+    const at = (distance: number) => startOffset + (endOffset - startOffset) * (totalLength ? distance / totalLength : 0);
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i];
       const dx = b.x - a.x, dz = b.y - a.y;
       const length = Math.hypot(dx, dz);
       if (length < 1e-6) continue;
       const nx = dz / length, nz = -dx / length;
-      if (!vertices.length) vertices.push(new THREE.Vector3(a.x + nx * offset, height, a.y + nz * offset));
+      if (!vertices.length) vertices.push(new THREE.Vector3(a.x + nx * at(0), height, a.y + nz * at(0)));
+      traveled += length;
+      const localOffset = at(traveled);
       // Meet the adjacent offset segments with a bounded miter, avoiding a visible corner crack.
       if (i < points.length - 1) {
         const next = points[i + 1], ndx = next.x - b.x, ndz = next.y - b.y;
@@ -481,13 +489,13 @@ export class MetroRenderer {
           const mx = ndz / nLength, mz = -ndx / nLength;
           const scale = 1 + nx * mx + nz * mz;
           if (scale > 0.5) {
-            const miter = offset / scale;
+            const miter = localOffset / scale;
             vertices.push(new THREE.Vector3(b.x + (nx + mx) * miter, height, b.y + (nz + mz) * miter));
             continue;
           }
         }
       }
-      vertices.push(new THREE.Vector3(b.x + nx * offset, height, b.y + nz * offset));
+      vertices.push(new THREE.Vector3(b.x + nx * localOffset, height, b.y + nz * localOffset));
     }
     if (vertices.length < 2) return;
     // Each offset segment remains straight through the station entrance.
@@ -496,35 +504,15 @@ export class MetroRenderer {
       group.add(mesh(new THREE.TubeGeometry(path, 1, radius, 10, false), MAT(color)));
     }
   }
-  private laneOffset(s: State, lineId: number, from: number, to: number): number {
+  private laneOffset(s: State, lineId: number, from: number, to: number, progress = 0): number {
     const segment = deriveTrackLayout(s).segments.find((edge) =>
       (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from));
     const lane = segment?.lanes.find((item) => item.lineId === lineId);
     if (!lane || !segment) return 0;
-    return from === segment.from ? lane.offset : -lane.offset;
-  }
-  private drawApproaches(s: State, layout: ReturnType<typeof deriveTrackLayout>): void {
-    for (const approach of layout.approaches) {
-      if (approach.lanes.length < 2 || new Set(approach.lanes.map((lane) => lane.neighborId)).size < 2) continue;
-      const origin = station(s, approach.stationId);
-      const length = 0.95;
-      const nx = approach.tangent.y, nz = -approach.tangent.x;
-      const start = { x: origin.x, y: origin.y };
-      const end = { x: origin.x + approach.tangent.x * length, y: origin.y + approach.tangent.y * length };
-      // End the colored overlay before a distinct branch diverges, to avoid an invented spur.
-      const diverge = Math.min(...approach.lanes.map((lane) => {
-        const far = station(s, lane.neighborId);
-        const points = trackPoints(origin, far);
-        return Math.hypot(points[1].x - origin.x, points[1].y - origin.y);
-      }));
-      if (diverge < length) continue;
-      this.drawLane([start, end], 0, 0.105, '#fffaf6', this.tracks, 0.20);
-      for (const lane of approach.lanes) {
-        const from = { x: start.x + nx * lane.offset, y: start.y + nz * lane.offset };
-        const to = { x: end.x + nx * lane.offset, y: end.y + nz * lane.offset };
-        this.drawLane([from, to], 0, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.49);
-      }
-    }
+    const endpoints = segment.endpointOffsets;
+    const t = from === segment.from ? progress : 1 - progress;
+    const canonical = endpoints ? endpoints.from + (endpoints.to - endpoints.from) * t : lane.offset;
+    return from === segment.from ? canonical : -canonical;
   }
   showPreview(s: State, stops: number[], line: number, valid = true): void {
     disposeGroup(this.preview);
@@ -691,9 +679,8 @@ export class MetroRenderer {
       for (const edge of layout.segments) {
         this.drawLane(edge.points, 0, 0.105, '#fffaf6', this.tracks, 0.20);
         for (const lane of edge.lanes)
-          this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43);
+          this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43, edge.endpointOffsets);
       }
-      this.drawApproaches(s, layout);
       for (const t of ghost)
         this.track(
           station(s, t.from),
@@ -744,7 +731,7 @@ export class MetroRenderer {
       const a = station(s, t.from),
         b = t.to !== null ? station(s, t.to) : a,
         position = trackPosition(a, b, t.progress),
-        lane = t.to !== null ? this.laneOffset(s, t.line, t.from, t.to) : 0,
+        lane = t.to !== null ? this.laneOffset(s, t.line, t.from, t.to, t.progress) : 0,
         tangent = new THREE.Vector2(Math.sin(position.angle), Math.cos(position.angle)),
         lateral = new THREE.Vector2(tangent.y, -tangent.x);
       entry.group.position.set(position.x + lateral.x * lane, 0.48, position.y + lateral.y * lane);

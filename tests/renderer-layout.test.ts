@@ -109,6 +109,66 @@ describe('shared station visual layout', () => {
     expect(maxY).toBeLessThan(0.32);
     renderer.dispose();
   });
+  it('keeps distinct same-sector branches separated beyond the entrance and aligns their trains to those visible lanes', () => {
+    const { renderer, state } = setup();
+    const origin = state.stations[0], one = state.stations[1], two = state.stations[2];
+    origin.x = 0; origin.y = 0; one.x = 7; one.y = 1; two.x = 7; two.y = 2;
+    state.lines = [
+      { id: 0, stops: [origin.id, one.id], loop: false },
+      { id: 1, stops: [origin.id, two.id], loop: false },
+    ];
+    state.trains = state.lines.map((line) => ({ id: 50 + line.id, line: line.id,
+      from: origin.id, to: line.stops[1], progress: 0.4, direction: 1 as const, dwell: 0,
+      passengers: [], carriages: 0, retiring: false, moveTo: null }));
+    renderer.render(state);
+    const colors = LINE_COLORS.slice(0, 2).map((c) => new THREE.Color(c).getHexString());
+    const paths = tracks(renderer).filter((m) => colors.includes((m.material as THREE.MeshStandardMaterial).color.getHexString()))
+      .map((m) => ({ color: (m.material as THREE.MeshStandardMaterial).color.getHexString(),
+        a: (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0),
+        b: (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(1) }));
+    const atMid = paths.filter((p) => Math.min(p.a.x, p.b.x) < 3 && Math.max(p.a.x, p.b.x) > 3);
+    expect(new Set(atMid.map((p) => p.color)).size).toBe(2);
+    const z = atMid.map((p) => p.a.z + (p.b.z - p.a.z) * ((3 - p.a.x) / (p.b.x - p.a.x))).sort((a,b) => a-b);
+    expect(z[1] - z[0]).toBeCloseTo(0.21, 2);
+    const groups = (renderer as unknown as { trains: Map<number, { group: THREE.Group }> }).trains;
+    const trains = [...groups.values()].map((v) => v.group.position.z).sort((a,b)=>a-b);
+    expect(trains[1] - trains[0]).toBeCloseTo(0.21, 2);
+    renderer.dispose();
+  });
+  it('keeps reverse-direction trains on the same interpolating branch lane', () => {
+    const { renderer, state } = setup();
+    const [a,b,c] = state.stations;
+    state.stations.push({ ...a, id: 777, x: 1, y: 0, queue: [] });
+    a.x=0; a.y=0; b.x=8; b.y=0; c.x=7; c.y=1;
+    state.lines = [{ id:0, stops:[a.id,c.id],loop:false },{ id:1,stops:[b.id,a.id],loop:false },{ id:2,stops:[b.id,777],loop:false }];
+    state.trains=[{id:889,line:1,from:b.id,to:a.id,progress:0.5,direction:1,dwell:0,passengers:[],carriages:0,retiring:false,moveTo:null}];
+    renderer.render(state);
+    const target=tracks(renderer).find((m)=>(m.material as THREE.MeshStandardMaterial).color.getHexString()===new THREE.Color(LINE_COLORS[1]).getHexString())!;
+    const path=(target.geometry as THREE.TubeGeometry).parameters.path;
+    const train=(renderer as unknown as { trains: Map<number,{group:THREE.Group}> }).trains.get(889)!.group;
+    expect(train.position.z).toBeCloseTo((path.getPoint(0).z+path.getPoint(1).z)/2,3);
+    renderer.dispose();
+  });
+  it('renders a lane that transitions between disagreeing endpoint sectors and keeps the train on it', () => {
+    const { renderer, state } = setup();
+    const [a,b,c] = state.stations;
+    state.stations.push({ ...a, id: 777, x: 1, y: 0, queue: [] });
+    a.x=0; a.y=0; b.x=8; b.y=0; c.x=7; c.y=1;
+    state.lines = [
+      { id:0, stops:[a.id,c.id], loop:false },
+      { id:1, stops:[a.id,b.id], loop:false },
+      { id:2, stops:[b.id,777], loop:false },
+    ];
+    state.trains=[{id:888,line:1,from:a.id,to:b.id,progress:0.5,direction:1,dwell:0,passengers:[],carriages:0,retiring:false,moveTo:null}];
+    renderer.render(state);
+    const target = tracks(renderer).find((m) => (m.material as THREE.MeshStandardMaterial).color.getHexString() === new THREE.Color(LINE_COLORS[1]).getHexString())!;
+    const path=(target.geometry as THREE.TubeGeometry).parameters.path;
+    const start=path.getPoint(0),end=path.getPoint(1);
+    expect(start.z).not.toBeCloseTo(end.z);
+    const train=(renderer as unknown as { trains: Map<number,{group:THREE.Group}> }).trains.get(888)!.group;
+    expect(train.position.z).toBeCloseTo((start.z+end.z)/2,3);
+    renderer.dispose();
+  });
   it('draws two distinct same-sector routes to different neighbors as a touching pair near the station', () => {
     const { renderer, state } = setup();
     const center = state.stations[0], one = state.stations[1], two = state.stations[2];
@@ -123,8 +183,9 @@ describe('shared station visual layout', () => {
     const colors = LINE_COLORS.slice(0, 2).map((c) => new THREE.Color(c).getHexString());
     const p = tracks(renderer).filter((m) => colors.includes((m.material as THREE.MeshStandardMaterial).color.getHexString()));
     const first = p.filter((m) => (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0).x === center.x &&
-      (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0).y > 0.45);
+      (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0).y > 0.42);
     expect(first).toHaveLength(2);
+    expect(first.every((m) => (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0).y === 0.43)).toBe(true);
     const zs = first.map((m) => (m.geometry as THREE.TubeGeometry).parameters.path.getPoint(0).z).sort((a, b) => a - b);
     expect(zs[1] - zs[0]).toBeCloseTo(0.21, 4);
     renderer.dispose();

@@ -61,6 +61,17 @@ describe('visual track layout', () => {
     ]);
   });
 
+  it('preserves both station entrance lane requirements on a segment with dense junctions at each endpoint', () => {
+    const state = fixture([[0, 0], [8, 0], [7, 1], [1, 0]], [[10, 12], [10, 11], [11, 13]]);
+    const layout = deriveTrackLayout(state);
+    const edge = layout.segments.find(({ from, to }) => from === 10 && to === 11)!;
+    expect(edge.endpointOffsets).toBeDefined();
+    expect(edge.endpointOffsets?.from).not.toBeCloseTo(edge.endpointOffsets?.to ?? 0);
+    const a = layout.approaches.find(({ stationId, sector }) => stationId === 10 && sector === 0)!;
+    const b = layout.approaches.find(({ stationId, sector }) => stationId === 11 && sector === 4)!;
+    expect(a.lanes.find(({ neighborId }) => neighborId === 11)?.offset).toBeCloseTo(edge.endpointOffsets?.from ?? edge.lanes[0].offset);
+    expect(b.lanes.find(({ neighborId }) => neighborId === 10)?.offset).toBeCloseTo(-(edge.endpointOffsets?.to ?? edge.lanes[0].offset));
+  });
   it('mirrors lane offsets at the far station to preserve physical color order', () => {
     const state = fixture([[0, 0], [4, 0]], [[10, 11], [11, 10]]);
     const layout = deriveTrackLayout(state);

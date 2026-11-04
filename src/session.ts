@@ -143,10 +143,10 @@ export class Session {
     let advanced = 0;
     for (let i = 0; i < ticks; i++) {
       if (this.tick >= MAX_TICKS) throw new Error('达到六小时回放安全上限');
-      if (!advance(this.state, (event) => {
-        this.serviceEvents.push(event);
-        if (this.serviceEvents.length > 128) this.serviceEvents.shift();
-      })) break;
+      if (!advance(this.state, (event) => this.serviceEvents.push(event))) break;
+      // Keep the current step's full service burst, but discard old visual frames.
+      if (this.serviceEvents.length && this.serviceEvents[0].tick < this.tick - 7)
+        this.serviceEvents = this.serviceEvents.filter((event) => event.tick >= this.tick - 7);
       advanced++;
       if (this.tick % 600 === 0) this.checkpoint();
     }
