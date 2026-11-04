@@ -24,6 +24,11 @@
   width: max-content;
   background: #ffd7df;
 }
+.train-badge-grouped[hidden] { display: none; }
+.train-group-badge { --line: #786a8a; }
+.train-group-list { display: grid; gap: 5px; margin-top: 10px; max-height: min(42dvh, 260px); overflow-y: auto; }
+.train-group-list button { min-height: 36px; text-align: left; border-left: 4px solid var(--line); background: #fffaf6; color: #493c55; }
+@media (max-width: 650px) { .train-group-list button { min-height: 44px; } }
 .train-detail {
   position: absolute;
   z-index: 11;

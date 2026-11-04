@@ -142,6 +142,8 @@ function resetView(): void {
   selectedStation = null;
   selectedTrain = null;
   $('train-detail').hidden = true;
+  delete $('train-detail').dataset.groupStation;
+  delete $('train-detail').dataset.groupKey;
   trainLayer.replaceChildren();
   draft = null;
   decisionPage = 0;
@@ -415,6 +417,15 @@ function update(): void {
     if (n.innerHTML !== content) n.innerHTML = content;
   }
   const activeTrainIds = new Set(s.trains.map((t) => String(t.id)));
+  const stationTrains = new Map<number, typeof s.trains>();
+  for (const t of s.trains) if (t.to === null) {
+    const group = stationTrains.get(t.from) ?? [];
+    group.push(t);
+    stationTrains.set(t.from, group);
+  }
+  const visibleGroups = new Set([...stationTrains].filter(([, group]) => group.length > 1).map(([id]) => String(id)));
+  for (const badge of trainLayer.querySelectorAll<HTMLElement>('[data-train-group]'))
+    if (!visibleGroups.has(badge.dataset.trainGroup!)) badge.remove();
   for (const badge of trainLayer.querySelectorAll<HTMLElement>('[data-train-id]'))
     if (!activeTrainIds.has(badge.dataset.trainId!)) badge.remove();
   for (const t of s.trains) {
@@ -437,6 +448,41 @@ function update(): void {
     badge.textContent = `${t.passengers.length}/${capacity}`;
     badge.setAttribute('aria-label', `${t.id} 号列车，${t.passengers.length}/${capacity} 人，点击查看目的地`);
     badge.classList.toggle('full', t.passengers.length >= capacity);
+    badge.classList.toggle('train-badge-grouped', t.to === null && (stationTrains.get(t.from)?.length ?? 0) > 1);
+    badge.hidden = t.to === null && (stationTrains.get(t.from)?.length ?? 0) > 1;
+  }
+  for (const [stationId, group] of stationTrains) {
+    if (group.length < 2) continue;
+    let badge = trainLayer.querySelector<HTMLButtonElement>(`[data-train-group="${stationId}"]`);
+    if (!badge) {
+      badge = document.createElement('button');
+      badge.type = 'button';
+      badge.className = 'train-badge train-group-badge';
+      badge.dataset.trainGroup = String(stationId);
+      trainLayer.append(badge);
+    }
+    const p = s.stations.find((station) => station.id === stationId)!;
+    const q = renderer.project(p.x, p.y, 0.9);
+    badge.style.left = `${q.x}px`;
+    badge.style.top = `${q.y}px`;
+    badge.textContent = `${group.length} 辆`;
+    badge.setAttribute('aria-label', `${p.id} 号车站有 ${group.length} 辆停靠列车，点击选择`);
+  }
+  if (selectedTrain === null) {
+    const detail = $('train-detail');
+    if (detail.dataset.groupStation) {
+      const stationId = Number(detail.dataset.groupStation);
+      const group = stationTrains.get(stationId) ?? [];
+      const key = group.map((t) => `${t.id}:${t.passengers.length}:${t.carriages}`).join(',');
+      if (group.length < 2) {
+        detail.hidden = true;
+        delete detail.dataset.groupStation;
+        delete detail.dataset.groupKey;
+      } else if (detail.dataset.groupKey !== key) {
+        detail.dataset.groupKey = key;
+        detail.innerHTML = `<strong>${group.length} 辆停靠列车</strong><button type="button" id="train-detail-close" aria-label="收起列车列表">×</button><div class="train-group-list">${group.map((t) => `<button type="button" data-train-choice="${t.id}" style="--line:${LINE_COLORS[t.line]}">${t.id} 号列车 · ${t.passengers.length}/${RULES.capacity * (1 + t.carriages)}</button>`).join('')}</div>`;
+      }
+    }
   }
   if (selectedTrain !== null) {
     const t = s.trains.find((item) => item.id === selectedTrain);
@@ -444,6 +490,8 @@ function update(): void {
     const detail = $('train-detail');
     detail.hidden = !t;
     if (t) {
+      delete detail.dataset.groupStation;
+      delete detail.dataset.groupKey;
       const capacity = RULES.capacity * (1 + t.carriages),
         destinations = SHAPES.map((shape) => ({ shape, count: t.passengers.filter((p) => p.shape === shape).length }))
           .filter((item) => item.count)
@@ -902,7 +950,22 @@ app.addEventListener('click', (e) => {
   }
 });
 trainLayer.addEventListener('click', (e) => {
-  const badge = (e.target as Element).closest<HTMLElement>('[data-train-id]');
+  const target = e.target as Element;
+  const group = target.closest<HTMLElement>('[data-train-group]');
+  if (group) {
+    e.stopPropagation();
+    const stationId = Number(group.dataset.trainGroup);
+    const trains = controller.getState().trains.filter((t) => t.from === stationId && t.to === null);
+    const detail = $('train-detail');
+    detail.hidden = false;
+    detail.removeAttribute('data-key');
+    detail.dataset.groupStation = String(stationId);
+    detail.dataset.groupKey = trains.map((t) => `${t.id}:${t.passengers.length}:${t.carriages}`).join(',');
+    detail.innerHTML = `<strong>${trains.length} 辆停靠列车</strong><button type="button" id="train-detail-close" aria-label="收起列车列表">×</button><div class="train-group-list">${trains.map((t) => `<button type="button" data-train-choice="${t.id}" style="--line:${LINE_COLORS[t.line]}">${t.id} 号列车 · ${t.passengers.length}/${RULES.capacity * (1 + t.carriages)}</button>`).join('')}</div>`;
+    selectedTrain = null;
+    return;
+  }
+  const badge = target.closest<HTMLElement>('[data-train-id]');
   if (!badge) return;
   e.stopPropagation();
   selectedTrain = Number(badge.dataset.trainId);
@@ -910,8 +973,18 @@ trainLayer.addEventListener('click', (e) => {
   update();
 });
 $('train-detail').addEventListener('click', (e) => {
+  const choice = (e.target as Element).closest<HTMLElement>('[data-train-choice]');
+  if (choice) {
+    selectedTrain = Number(choice.dataset.trainChoice);
+    $('train-detail').removeAttribute('data-key');
+    uiAt = 0;
+    update();
+    return;
+  }
   if (!(e.target as Element).closest('#train-detail-close')) return;
   selectedTrain = null;
+  delete $('train-detail').dataset.groupStation;
+  delete $('train-detail').dataset.groupKey;
   $('train-detail').hidden = true;
 });
 stage.addEventListener('click', (e) => {

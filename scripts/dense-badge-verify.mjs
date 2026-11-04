@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { chromium } from '@playwright/test';
+import { createServer } from 'vite';
+import { browserLaunchOptions } from './browser-launch.mjs';
+
+const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
+await server.listen();
+const browser = await chromium.launch(browserLaunchOptions());
+try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+  await page.goto(server.resolvedUrls.local[0], { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.metro);
+  const result = await page.evaluate(() => {
+    const metro = window.metro;
+    metro.restart({ mode: 'creative', seed: 77 });
+    const [a, b] = metro.getState().stations;
+    return Array.from({ length: 7 }, (_, line) => metro.submit({ action: { type: 'route', line, stops: [a.id, b.id] } }).ok);
+  });
+  assert.ok(result.every(Boolean));
+  await page.waitForFunction(() => document.querySelector('[data-train-group]'));
+  assert.equal(await page.locator('.train-badge:visible').count(), 1, 'stationary trains use one visible map badge');
+  const group = page.locator('[data-train-group]');
+  assert.match(await group.innerText(), /7 辆/);
+  await group.focus();
+  await group.press('Enter');
+  await page.waitForFunction(() => document.querySelectorAll('[data-train-choice]').length === 7);
+  const choices = page.locator('[data-train-choice]');
+  assert.equal(await choices.count(), 7);
+  const selectedId = await choices.nth(1).getAttribute('data-train-choice');
+  await choices.nth(1).click();
+  const detail = page.locator('#train-detail');
+  await detail.waitFor({ state: 'visible' });
+  assert.match(await detail.innerText(), new RegExp(`${selectedId} 号列车`));
+  assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ passed: true, groupCount: 7, selectedId, errors }));
+} finally {
+  await browser.close();
+  await server.close();
+}
