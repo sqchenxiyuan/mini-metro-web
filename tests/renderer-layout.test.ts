@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { LINE_COLORS, createState } from '../src/rules';
+import * as layoutModule from '../src/track-layout';
 import { MetroRenderer } from '../src/renderer';
 
 vi.mock('three', async (original) => {
@@ -210,6 +211,25 @@ describe('shared station visual layout', () => {
     const factor = offset / (1 + Math.SQRT1_2);
     expect(joint.x).toBeCloseTo(bend.x + (normalA.x + normalB.x) * factor, 4);
     expect(joint.z).toBeCloseTo(bend.y + (normalA.y + normalB.y) * factor, 4);
+    renderer.dispose();
+  });
+  it('derives the route layout once per unchanged frame, even with 32 moving trains', () => {
+    const { renderer, state } = setup();
+    const [a, b] = state.stations;
+    state.lines[0].stops = [a.id, b.id];
+    state.trains = Array.from({ length: 32 }, (_, id) => ({
+      id: 1000 + id, line: 0, from: a.id, to: b.id, progress: id / 64,
+      direction: 1 as const, dwell: 0, passengers: [], carriages: 0, retiring: false, moveTo: null,
+    }));
+    const count = vi.spyOn(layoutModule, 'deriveTrackLayout');
+    renderer.render(state);
+    const first = count.mock.calls.length;
+    expect(first).toBe(1);
+    state.tick++;
+    state.trains.forEach((t) => { t.progress += 0.01; });
+    renderer.render(state);
+    expect(count.mock.calls.length).toBe(first);
+    count.mockRestore();
     renderer.dispose();
   });
   it('keeps trains on their own colored rail when station ID order opposes spatial order', () => {

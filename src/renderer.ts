@@ -272,6 +272,7 @@ export class MetroRenderer {
   private loadSnapshot: LoadSnapshot | null = null;
   private city: City | null = null;
   private routeKey = '';
+  private trackLayout: ReturnType<typeof deriveTrackLayout> | null = null;
   private observer: ResizeObserver;
   private zoom = 1;
   private manualCamera = false;
@@ -504,8 +505,8 @@ export class MetroRenderer {
       group.add(mesh(new THREE.TubeGeometry(path, 1, radius, 10, false), MAT(color)));
     }
   }
-  private laneOffset(s: State, lineId: number, from: number, to: number, progress = 0): number {
-    const segment = deriveTrackLayout(s).segments.find((edge) =>
+  private laneOffset(layout: ReturnType<typeof deriveTrackLayout> | null, lineId: number, from: number, to: number, progress = 0): number {
+    const segment = layout?.segments.find((edge) =>
       (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from));
     const lane = segment?.lanes.find((item) => item.lineId === lineId);
     if (!lane || !segment) return 0;
@@ -675,8 +676,8 @@ export class MetroRenderer {
     if (key !== this.routeKey) {
       this.routeKey = key;
       disposeGroup(this.tracks);
-      const layout = deriveTrackLayout(s);
-      for (const edge of layout.segments) {
+      this.trackLayout = deriveTrackLayout(s);
+      for (const edge of this.trackLayout.segments) {
         this.drawLane(edge.points, 0, 0.105, '#fffaf6', this.tracks, 0.20);
         for (const lane of edge.lanes)
           this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43, edge.endpointOffsets);
@@ -731,7 +732,7 @@ export class MetroRenderer {
       const a = station(s, t.from),
         b = t.to !== null ? station(s, t.to) : a,
         position = trackPosition(a, b, t.progress),
-        lane = t.to !== null ? this.laneOffset(s, t.line, t.from, t.to, t.progress) : 0,
+        lane = t.to !== null ? this.laneOffset(this.trackLayout, t.line, t.from, t.to, t.progress) : 0,
         tangent = new THREE.Vector2(Math.sin(position.angle), Math.cos(position.angle)),
         lateral = new THREE.Vector2(tangent.y, -tangent.x);
       entry.group.position.set(position.x + lateral.x * lane, 0.48, position.y + lateral.y * lane);
@@ -764,6 +765,7 @@ export class MetroRenderer {
     this.clearTransfers();
     this.loadSnapshot = null;
     this.previousTrainAnchors.clear();
+    this.trackLayout = null;
     disposeGroup(this.environment);
     disposeGroup(this.tracks);
     disposeGroup(this.preview);
