@@ -363,6 +363,26 @@ describe('shared station visual layout', () => {
     expect(Number.isFinite(group.position.z)).toBe(true);
     renderer.dispose();
   });
+  it('rounds the actual bend while keeping the train on the drawn lane', () => {
+    const { renderer, state } = setup();
+    const a = state.stations[0], b = state.stations[1];
+    a.x = 0; a.y = 0; b.x = 8; b.y = 3;
+    state.lines[0].stops = [a.id, b.id];
+    state.trains = [{ id: 922, line: 0, from: a.id, to: b.id,
+      progress: 5 / (5 + Math.hypot(3, 3)) - 0.01, direction: 1, dwell: 0,
+      passengers: [], carriages: 0, retiring: false, moveTo: null }];
+    renderer.render(state);
+    const rail = tracks(renderer).find((m) =>
+      (m.material as THREE.MeshStandardMaterial).color.getHexString() === new THREE.Color(LINE_COLORS[0]).getHexString())!;
+    const path = (rail.geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>;
+    expect(path.curves.some((curve) => curve instanceof THREE.QuadraticBezierCurve3)).toBe(true);
+    const point = (renderer as unknown as { lanePosition: (...args: unknown[]) => { x: number; y: number }; trackLayout: unknown }).lanePosition(
+      (renderer as unknown as { trackLayout: unknown }).trackLayout, 0, a.id, b.id,
+      state.trains[0].progress, a, b);
+    const onPath = Array.from({ length: 2001 }, (_, i) => path.getPoint(i / 2000));
+    expect(Math.min(...onPath.map((p) => Math.hypot(p.x - point.x, p.z - point.y)))).toBeLessThan(0.015);
+    renderer.dispose();
+  });
   it('draws one continuous rail through a vertical-to-diagonal bend', () => {
     const { renderer } = setup();
     const helper = renderer as unknown as { drawLane: (points: { x: number; y: number }[], offset: number, radius: number,
@@ -386,9 +406,13 @@ describe('shared station visual layout', () => {
     const rails = tracks(renderer).filter((m) =>
       (m.material as THREE.MeshStandardMaterial).color.getHexString() === color);
     expect(rails).toHaveLength(1);
-    const bend = ((rails[0].geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>).curves[0].getPoint(1);
+    const path = (rails[0].geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>;
     const train = (renderer as unknown as { trains: Map<number, { group: THREE.Group }> }).trains.get(990)!.group.position;
-    expect(Math.hypot(train.x - bend.x, train.z - bend.z)).toBeLessThan(0.105);
+    const distance = Math.min(...Array.from({ length: 2001 }, (_, i) => {
+      const point = path.getPoint(i / 2000);
+      return Math.hypot(train.x - point.x, train.z - point.z);
+    }));
+    expect(distance).toBeLessThan(0.105);
     renderer.dispose();
   });
   it('keeps a 45-degree offset bend miter inside the two intended parallel lane edges', () => {
@@ -403,7 +427,10 @@ describe('shared station visual layout', () => {
     const colored = tracks(renderer).filter((m) =>
       (m.material as THREE.MeshStandardMaterial).color.getHexString() === new THREE.Color(LINE_COLORS[0]).getHexString());
     expect(colored).toHaveLength(1);
-    const joint = ((colored[0].geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>).curves[0].getPoint(1);
+    const path = (colored[0].geometry as THREE.TubeGeometry).parameters.path as THREE.CurvePath<THREE.Vector3>;
+    const rounded = path.curves.find((curve) => curve instanceof THREE.QuadraticBezierCurve3) as THREE.QuadraticBezierCurve3;
+    expect(rounded).toBeInstanceOf(THREE.QuadraticBezierCurve3);
+    const joint = rounded.v1;
     const bend = { x: b.x - Math.abs(b.y - a.y), y: a.y };
     const offset = -0.105;
     const normalA = { x: 0, y: -1 };

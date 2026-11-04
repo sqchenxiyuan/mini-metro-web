@@ -482,6 +482,28 @@ export class MetroRenderer {
     }
     return vertices;
   }
+  private laneCurve(vertices: THREE.Vector3[]): THREE.CurvePath<THREE.Vector3> {
+    const path = new THREE.CurvePath<THREE.Vector3>();
+    let cursor = vertices[0];
+    for (let i = 1; i < vertices.length - 1; i++) {
+      const a = vertices[i - 1], bend = vertices[i], b = vertices[i + 1];
+      const incoming = bend.clone().sub(a), outgoing = b.clone().sub(bend);
+      const first = incoming.length(), second = outgoing.length();
+      if (first < 0.2 || second < 0.2 || incoming.normalize().dot(outgoing.normalize()) > 0.999) {
+        path.add(new THREE.LineCurve3(cursor, bend));
+        cursor = bend;
+        continue;
+      }
+      const trim = Math.min(0.18, first * 0.2, second * 0.2);
+      const entry = bend.clone().addScaledVector(incoming, -trim);
+      const exit = bend.clone().addScaledVector(outgoing, trim);
+      path.add(new THREE.LineCurve3(cursor, entry));
+      path.add(new THREE.QuadraticBezierCurve3(entry, bend, exit));
+      cursor = exit;
+    }
+    path.add(new THREE.LineCurve3(cursor, vertices.at(-1)!));
+    return path;
+  }
   private drawLane(
     points: { x: number; y: number }[], offset: number, radius: number,
     color: string, group: THREE.Group, height: number,
@@ -489,10 +511,8 @@ export class MetroRenderer {
   ): void {
     const vertices = this.trackVertices(points, offset, height, endpointOffsets);
     if (vertices.length < 2) return;
-    const path = new THREE.CurvePath<THREE.Vector3>();
-    for (let i = 1; i < vertices.length; i++)
-      path.add(new THREE.LineCurve3(vertices[i - 1], vertices[i]));
-    group.add(mesh(new THREE.TubeGeometry(path, Math.max(2, (vertices.length - 1) * 4), radius, 10, false), MAT(color)));
+    const path = this.laneCurve(vertices);
+    group.add(mesh(new THREE.TubeGeometry(path, Math.max(8, (vertices.length - 1) * 12), radius, 10, false), MAT(color)));
   }
   private lanePosition(
     layout: ReturnType<typeof deriveTrackLayout> | null, lineId: number,
