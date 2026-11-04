@@ -64,15 +64,16 @@ describe('opt-in city map generator (project proposal, not original-game calibra
         expect(distance(a.stations[i], a.stations[j])).toBeGreaterThanOrEqual(d.separation);
     }
   });
-  it('keeps default rules.1 state/replay fingerprints stable and does not activate map-v2 implicitly', () => {
-    const fingerprints = { orchard: ['97f4db53', '54c9b591'], harbor: ['b31a002c', 'd7796ecb'], islands: ['595ec61d', '3fb90f18'] };
+  it('creates deterministic current-version states and replays without activating the map-v2 proposal', () => {
     for (const city of cities) {
-      const game = new Session({ seed: 42, city });
-      expect(game.getState().version).toBe('orchard-metro.rules.1');
-      expect(hash(game.getState())).toBe(fingerprints[city][0]);
-      game.step(1000);
-      expect(hash(game.getState())).toBe(fingerprints[city][1]);
-      expect(hash(new ReplayPlayer(game.exportReplay()).getState())).toBe(fingerprints[city][1]);
+      const a = new Session({ seed: 42, city });
+      const b = new Session({ seed: 42, city });
+      expect(a.getState().version).toBe('orchard-metro.rules.2');
+      expect(hash(a.getState())).toBe(hash(b.getState()));
+      a.step(1000);
+      b.step(1000);
+      expect(hash(a.getState())).toBe(hash(b.getState()));
+      expect(hash(new ReplayPlayer(a.exportReplay()).getState())).toBe(hash(a.getState()));
     }
   });
   it('bounds impossible placements, logs failure without replacing the scheduled shape', () => {

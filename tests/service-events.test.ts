@@ -17,6 +17,43 @@ function route(s: State, line: number, stops: number[]): void {
 }
 
 describe('per-tick passenger service events', () => {
+  it('does not endlessly unload and reboard one rider at the same station', () => {
+    const s = quiet();
+    route(s, 0, [1, 2, 3]);
+    const t = s.trains[0];
+    t.from = 2; t.to = null; t.dwell = 0;
+    const p = passenger(s, 'circle');
+    t.passengers.push(p);
+    const events: ServiceEvent[] = [];
+    for (let i = 0; i < 18; i++) advance(s, (event) => events.push(event));
+    expect(events.filter((event) => event.passengerId === p.id).map((event) => event.type)).toEqual(['transferOut']);
+    expect(t.to).toBe(3);
+  });
+  it('does not repeatedly unload and reboard at a station across staged service ticks', () => {
+    const s = quiet();
+    route(s, 0, [1, 2]);
+    const t = s.trains[0];
+    t.from = 2; t.to = null; t.dwell = 0;
+    const p = passenger(s, 'triangle');
+    t.passengers.push(p);
+    const events: ServiceEvent[] = [];
+    for (let i = 0; i < 18; i++) advance(s, (event) => events.push(event));
+    expect(events.filter((event) => event.trainId === t.id && event.passengerId === p.id).map((event) => event.type)).toEqual(['deliver']);
+    expect(t.to).toBe(1);
+  });
+  it('boards riders one at a time and extends dwell with each rider', () => {
+    const s = quiet();
+    route(s, 0, [1, 2]);
+    s.trains[0].dwell = 0;
+    const first = passenger(s, 'triangle'), second = passenger(s, 'triangle');
+    station(s, 1).queue.push(first, second);
+    const events: ServiceEvent[] = [];
+    for (let i = 0; i < 12; i++) advance(s, (event) => events.push(event));
+    const boards = events.filter((event) => event.type === 'board');
+    expect(boards.map((event) => event.passengerId)).toEqual([first.id, second.id]);
+    expect(boards[1].tick).toBeGreaterThan(boards[0].tick);
+    expect(events.find((event) => event.type === 'depart')!.tick).toBeGreaterThan(boards[1].tick);
+  });
   it('reports real boarding before departure with station and train identity', () => {
     const s = quiet();
     route(s, 0, [1, 2]);
@@ -32,8 +69,8 @@ describe('per-tick passenger service events', () => {
     ]);
     expect(train.passengers.map((r) => r.id)).toEqual([p.id]);
     expect(station(s, 1).queue).toEqual([]);
-    for (let i = 0; i < 7; i++) advance(s, (event) => events.push(event));
-    expect(events.at(-1)).toEqual({ type: 'depart', tick: 8, sequence: 0,
+    for (let i = 0; i < 8; i++) advance(s, (event) => events.push(event));
+    expect(events.at(-1)).toEqual({ type: 'depart', tick: 9, sequence: 0,
       stationId: 1, trainId: train.id, lineId: 0, passengerId: null, shape: null });
   });
 
@@ -57,10 +94,13 @@ describe('per-tick passenger service events', () => {
     expect(events).toEqual([
       { type: 'arrive', tick: 1, sequence: 0, stationId: 2, trainId: first.id, lineId: 0, passengerId: null, shape: null },
       { type: 'transferOut', tick: 1, sequence: 1, stationId: 2, trainId: first.id, lineId: 0, passengerId: transfer.id, shape: 'square' },
-      { type: 'deliver', tick: 1, sequence: 2, stationId: 2, trainId: first.id, lineId: 0, passengerId: delivered.id, shape: 'triangle' },
-      { type: 'board', tick: 1, sequence: 3, stationId: 2, trainId: first.id, lineId: 0, passengerId: returnTrip.id, shape: 'circle' },
-      { type: 'board', tick: 1, sequence: 4, stationId: 2, trainId: second.id, lineId: 1, passengerId: transfer.id, shape: 'square' },
+      { type: 'board', tick: 1, sequence: 2, stationId: 2, trainId: second.id, lineId: 1, passengerId: transfer.id, shape: 'square' },
     ]);
+    for (let i = 0; i < 14; i++) advance(s, (event) => events.push(event));
+    const firstEvents = events.filter((event) => event.trainId === first.id);
+    expect(firstEvents.map((event) => event.type)).toEqual(['arrive', 'transferOut', 'deliver', 'board', 'depart']);
+    expect(firstEvents[2].tick).toBeGreaterThan(firstEvents[1].tick);
+    expect(firstEvents[3].tick).toBeGreaterThan(firstEvents[2].tick);
     expect(transfer.transfers).toBe(1);
     expect(s.score).toBe(1);
     expect(station(s, 2).queue).toEqual([]);
@@ -78,7 +118,7 @@ describe('per-tick passenger service events', () => {
     const events: ServiceEvent[] = [];
     for (let i = 0; i < 110; i++) advance(s, (event) => events.push(event));
     expect(events.slice(0, 5).map(({ type, tick, sequence }) => [type, tick, sequence])).toEqual([
-      ['board', 1, 0], ['depart', 8, 0], ['arrive', expect.any(Number), 0],
+      ['board', 1, 0], ['depart', 9, 0], ['arrive', expect.any(Number), 0],
       ['deliver', expect.any(Number), 1], ['depart', expect.any(Number), 0],
     ]);
     expect(events[2].tick).toBe(events[3].tick);

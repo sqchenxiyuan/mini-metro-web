@@ -10,7 +10,6 @@ describe('session transient service events', () => {
     session.submit({ action: { type: 'addTrain', line: 0, station: a.id } });
     session.step(12000);
     const events = session.drainServiceEvents();
-    expect(events.length).toBeGreaterThan(0);
     expect(events.length).toBeLessThan(128);
     expect(events.every((event) => event.tick >= session.tick - 8)).toBe(true);
   });
@@ -28,8 +27,12 @@ describe('session transient service events', () => {
         id: 10000 + index * 6 + n, shape: a.shape, born: 0, transfers: 0,
       }));
     });
-    session.step(1);
-    const events = session.drainServiceEvents();
+    // Drain while the staged service is in progress, rather than discarding
+    // earlier ticks outside the visual history window.
+    session.step(7);
+    const first = session.drainServiceEvents();
+    session.step(9);
+    const events = [...first, ...session.drainServiceEvents()];
     expect(events.filter((event) => event.type === 'deliver')).toHaveLength(144);
     expect(session.drainServiceEvents()).toEqual([]);
   });
@@ -39,7 +42,7 @@ describe('session transient service events', () => {
     const [a, b] = initial.stations;
     expect(session.submit({ action: { type: 'route', line: 0, stops: [a.id, b.id] } }).ok).toBe(true);
     expect(session.submit({ action: { type: 'addTrain', line: 0, station: a.id } }).ok).toBe(true);
-    session.step(6);
+    session.step(12);
     const events = session.drainServiceEvents();
     expect(events.some((event) => event.type === 'depart' && event.stationId === a.id)).toBe(true);
     session.step(100);

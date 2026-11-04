@@ -601,7 +601,7 @@ export class MetroRenderer {
           : new THREE.Vector3(p.x, 1.14, p.y);
         const boarding = event.type === 'board';
         this.addTransfer(event.passengerId, event.shape, boarding ? 'board' : 'alight',
-          boarding ? waiting : door, boarding ? door : waiting, s.tick);
+          boarding ? waiting : door, boarding ? door : waiting, event.tick);
       }
     }
     // No simulated passengers are added; these are visual echoes of observed ID changes.
@@ -612,7 +612,12 @@ export class MetroRenderer {
         disposeBadge(transfer.sprite);
         this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
       } else {
-        transfer.sprite.position.copy(transfer.start).lerp(transfer.end, Math.max(0, progress));
+        const t = Math.max(0, progress);
+        const eased = t * t * (3 - 2 * t);
+        transfer.sprite.position.copy(transfer.start).lerp(transfer.end, eased);
+        transfer.sprite.position.y += Math.sin(Math.PI * t) * 0.14;
+        const size = 0.58 + 0.12 * Math.sin(Math.PI * t);
+        transfer.sprite.scale.set(size, size, 1);
       }
     }
     this.loadSnapshot = current;
@@ -622,7 +627,7 @@ export class MetroRenderer {
     start: THREE.Vector3, end: THREE.Vector3, tick: number,
   ): void {
     const sprite = transferMarker(shape);
-    sprite.userData = { passengerId, direction };
+    sprite.userData = { passengerId, direction, tick };
     this.transfers.add(sprite);
     this.activeTransfers.push({ sprite, start, end, tick });
   }

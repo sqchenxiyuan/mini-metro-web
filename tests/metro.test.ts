@@ -156,6 +156,8 @@ describe('transport rules', () => {
     t.dwell = 0;
     station(s, 1).queue = Array.from({ length: 14 }, () => passenger(s, 'triangle'));
     advance(s);
+    expect(t.passengers).toHaveLength(1);
+    ticks(s, 10);
     expect(t.passengers).toHaveLength(6);
     expect(station(s, 1).queue).toHaveLength(8);
     s.resources.carriages = 1;
@@ -205,6 +207,13 @@ describe('transport rules', () => {
     expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2] }).ok).toBe(false);
     expect(applyAction(s, { type: 'upgrade', choice: s.upgrades[0] }).ok).toBe(true);
     expect(s.phase).toBe('playing');
+  });
+  it('rejects an old rules-1 replay after the boarding rules change', () => {
+    const s = new Session({ seed: 13 });
+    expect(s.getState().version).toBe('orchard-metro.rules.2');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v2');
+    const legacy = { ...s.exportReplay(), format: 'orchard-metro.replay.v1' };
+    expect(() => new ReplayPlayer(legacy as unknown as import('../src/types').Replay)).toThrow();
   });
   it('supports endless survival, restricted extreme editing, and creative land placement', () => {
     const s = quiet();

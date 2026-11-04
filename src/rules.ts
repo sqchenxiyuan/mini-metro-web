@@ -205,7 +205,7 @@ export function createState(options: Options = {}): State {
   )
     throw new Error('非法开局参数');
   const s: State = {
-    version: 'orchard-metro.rules.1',
+    version: 'orchard-metro.rules.2',
     seed,
     rng: seed || 1,
     tick: 0,
@@ -310,6 +310,7 @@ function newTrain(s: State, line: Line, at = line.stops[0], direction: 1 | -1 = 
     progress: 0,
     direction,
     dwell: 1,
+    serviceTicks: 0,
     passengers: [],
     carriages: 0,
     retiring: false,
@@ -515,46 +516,42 @@ export function findRoute(
   }
   return null;
 }
-function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?: (type: 'deliver' | 'transferOut' | 'board', t: Train, passenger: Passenger) => void): void {
-  const p = station(s, t.from),
-    keep: Passenger[] = [];
-  let handled = 0;
+function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?: (type: 'deliver' | 'transferOut' | 'board', t: Train, passenger: Passenger) => void): number {
+  const p = station(s, t.from);
   const cache = new Map<string, Route | null>();
   const route = (shape: Shape, line: number) => {
     const key = `${shape}:${line}`;
     if (!cache.has(key)) cache.set(key, findRoute(s, p.id, shape, line, g));
     return cache.get(key);
   };
-  for (const passenger of t.passengers) {
+  for (let i = 0; i < t.passengers.length; i++) {
+    const passenger = t.passengers[i];
     if (passenger.shape === p.shape) {
+      t.passengers.splice(i, 1);
       s.score++;
       s.totalWait += s.elapsed - passenger.born;
       emit?.('deliver', t, passenger);
-      handled++;
-      continue;
+      return 1;
     }
     const r = route(passenger.shape, t.line);
-    if (r && r.line === t.line && r.next === next) keep.push(passenger);
-    else {
-      passenger.transfers++;
-      p.queue.push(passenger);
-      emit?.('transferOut', t, passenger);
-      handled++;
-    }
+    if (r && r.line === t.line && r.next === next) continue;
+    t.passengers.splice(i, 1);
+    passenger.transfers++;
+    p.queue.push(passenger);
+    emit?.('transferOut', t, passenger);
+    return 1;
   }
-  t.passengers = keep;
-  const waiting: Passenger[] = [],
-    capacity = RULES.capacity * (1 + t.carriages);
-  for (const passenger of p.queue) {
+  if (t.passengers.length >= RULES.capacity * (1 + t.carriages)) return 0;
+  for (let i = 0; i < p.queue.length; i++) {
+    const passenger = p.queue[i];
     const r = route(passenger.shape, -1);
-    if (t.passengers.length < capacity && r && r.line === t.line && r.next === next) {
-      t.passengers.push(passenger);
-      emit?.('board', t, passenger);
-      handled++;
-    } else waiting.push(passenger);
+    if (!r || r.line !== t.line || r.next !== next) continue;
+    p.queue.splice(i, 1);
+    t.passengers.push(passenger);
+    emit?.('board', t, passenger);
+    return 1;
   }
-  p.queue = waiting;
-  t.dwell = 6 + handled * (p.interchange ? 1 : 2);
+  return 0;
 }
 function spawnStation(s: State): void {
   if (s.stations.length >= RULES.maxStations) return;
@@ -624,6 +621,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
       t.to = null;
       t.progress = 0;
       t.dwell = 0;
+      t.serviceTicks = 0;
       emit?.('arrive', t);
     }
     if (t.retiring) {
@@ -662,16 +660,22 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
     }
     const next = nextStop(l, t.from, t.direction)!;
     t.direction = next.direction;
-    if (t.dwell === 0) {
-      g ??= graph(s);
-      service(s, t, next.id, g, emit);
-    }
-    t.dwell--;
-    if (t.dwell <= 0) {
+    if (t.dwell > 0) t.dwell--;
+    if (t.dwell > 0) continue;
+    if (t.serviceTicks === -1) {
+      t.serviceTicks = 0;
       emit?.('depart', t);
       t.to = next.id;
       t.progress = 0;
       t.dwell = 0;
+      continue;
+    }
+    g ??= graph(s);
+    if (service(s, t, next.id, g, emit)) {
+      t.dwell = station(s, t.from).interchange ? 1 : 2;
+    } else {
+      t.serviceTicks = -1;
+      t.dwell = 6;
     }
   }
   if (retired.length) s.trains = s.trains.filter((t) => !retired.includes(t.id));

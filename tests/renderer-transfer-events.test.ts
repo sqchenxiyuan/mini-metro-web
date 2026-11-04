@@ -58,6 +58,22 @@ function passenger(id: number, shape: 'circle' | 'triangle' | 'square') {
 }
 
 describe('transfer visual feedback for dense stations', () => {
+  it('preserves per-rider event ticks in a skipped browser frame', () => {
+    const { renderer, state, train } = scene();
+    renderer.render(state);
+    const p = state.stations[0];
+    const events = [
+      { type: 'board' as const, tick: 1, sequence: 0, stationId: p.id,
+        trainId: train.id, lineId: train.line, passengerId: 301, shape: 'triangle' as const },
+      { type: 'board' as const, tick: 3, sequence: 0, stationId: p.id,
+        trainId: train.id, lineId: train.line, passengerId: 302, shape: 'square' as const },
+    ];
+    state.tick = 3;
+    renderer.render(state, 0, events);
+    expect(markers(renderer).map((sprite) => sprite.userData.tick)).toEqual([1, 3]);
+    expect(markers(renderer)[0].position.distanceTo(markers(renderer)[1].position)).toBeGreaterThan(0.05);
+    renderer.dispose();
+  });
   it('does not replay an old event with the same train ID after a restart at an equal tick', () => {
     const { renderer, state, train } = scene();
     renderer.render(state);

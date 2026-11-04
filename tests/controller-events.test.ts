@@ -11,8 +11,9 @@ describe('controller visual event boundary', () => {
     const controller = new MetroController({ mode: 'creative', seed: 77 });
     controller.submit({ action: { type: 'route', line: 0, stops: [a.id, b.id] } });
     controller.submit({ action: { type: 'addTrain', line: 0, station: a.id } });
-    controller.step(50);
+    controller.step(7);
     expect(controller.drainServiceEvents().length).toBeGreaterThan(0);
+    controller.step(43);
     const replay = controller.exportReplay();
     controller.step(50);
     controller.loadReplay(replay);
