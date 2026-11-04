@@ -61,6 +61,24 @@ try {
   await page.locator('#timeline').dispatchEvent('input');
   assert.equal(await page.evaluate(() => window.metro.getState().tick), 600);
 
+  // A Creative station selection must not remove the only way to choose the next shape.
+  await page.click('#new-game');
+  await page.selectOption('#mode-select', 'creative');
+  await page.click('#settings-form button[type="submit"]');
+  const selectedPoint = await page.evaluate(() => window.metro.projectStation(1));
+  await page.mouse.click(selectedPoint.x, selectedPoint.y);
+  await page.locator('#station-detail').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => document.querySelector('#station-detail h3')?.textContent?.includes('车站'));
+  assert.equal(await page.locator('#station-detail [data-station-shape]').count(), 10,
+    'Creative shape picker remains available after selecting a station');
+  await page.locator('#station-detail [data-station-shape="pentagon"]').click();
+  const beforeStations = await page.evaluate(() => window.metro.getState().stations.length);
+  const openGround = await page.evaluate(() => window.metro.projectStation(2));
+  await page.mouse.click(openGround.x - 75, openGround.y - 100);
+  assert.equal(await page.evaluate(() => window.metro.getState().stations.length), beforeStations + 1,
+    'Creative can place a selected shape after inspecting a station');
+  assert.equal(await page.evaluate(() => window.metro.getState().stations.at(-1).shape), 'pentagon');
+
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   mobile.on('pageerror', (error) => errors.push(String(error)));
   await mobile.goto(url, { waitUntil: 'networkidle' });
