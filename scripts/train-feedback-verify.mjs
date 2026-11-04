@@ -28,6 +28,8 @@ try {
   assert.ok(result, 'fixture must board at least one passenger');
   assert.ok(result.count <= result.capacity);
   const badge = page.locator(`[data-train-id="${result.id}"]`);
+  // The fixture advances simulation in one browser task; wait for the next animation frame to paint its badge.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   await badge.waitFor({ state: 'visible' });
   assert.match(await badge.getAttribute('aria-label'), new RegExp(`${result.count}/${result.capacity}`));
   await badge.click();

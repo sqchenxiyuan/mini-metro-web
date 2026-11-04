@@ -17,6 +17,7 @@ import type {
   Options,
   Record,
   Replay,
+  ServiceEvent,
   State,
 } from './types';
 
@@ -69,6 +70,10 @@ export function observeState(state: State): Observation {
 export class Session {
   private state: State;
   private recording: Replay;
+  private serviceEvents: ServiceEvent[] = [];
+  drainServiceEvents(): ServiceEvent[] {
+    return this.serviceEvents.splice(0);
+  }
   constructor(options: Options = {}) {
     this.state = createState(options);
     this.recording = {
@@ -138,7 +143,10 @@ export class Session {
     let advanced = 0;
     for (let i = 0; i < ticks; i++) {
       if (this.tick >= MAX_TICKS) throw new Error('达到六小时回放安全上限');
-      if (!advance(this.state)) break;
+      if (!advance(this.state, (event) => {
+        this.serviceEvents.push(event);
+        if (this.serviceEvents.length > 128) this.serviceEvents.shift();
+      })) break;
       advanced++;
       if (this.tick % 600 === 0) this.checkpoint();
     }

@@ -6,6 +6,7 @@ import type {
   Line,
   Options,
   Passenger,
+  ServiceObserver,
   Shape,
   State,
   Station,
@@ -329,15 +330,17 @@ function nextStop(
   if (!line.loop && (i + direction < 0 || i + direction >= n)) direction = direction === 1 ? -1 : 1;
   return { id: line.stops[(i + direction + n) % n], direction };
 }
-function unload(s: State, t: Train): void {
+function unload(s: State, t: Train, emit?: (type: 'deliver' | 'transferOut', t: Train, passenger: Passenger) => void): void {
   const p = station(s, t.from);
   for (const passenger of t.passengers) {
     if (passenger.shape === p.shape) {
       s.score++;
       s.totalWait += s.elapsed - passenger.born;
+      emit?.('deliver', t, passenger);
     } else {
       passenger.transfers++;
       p.queue.push(passenger);
+      emit?.('transferOut', t, passenger);
     }
   }
   t.passengers = [];
@@ -510,7 +513,7 @@ export function findRoute(
   }
   return null;
 }
-function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): void {
+function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?: (type: 'deliver' | 'transferOut' | 'board', t: Train, passenger: Passenger) => void): void {
   const p = station(s, t.from),
     keep: Passenger[] = [];
   let handled = 0;
@@ -524,6 +527,7 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): void
     if (passenger.shape === p.shape) {
       s.score++;
       s.totalWait += s.elapsed - passenger.born;
+      emit?.('deliver', t, passenger);
       handled++;
       continue;
     }
@@ -532,6 +536,7 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): void
     else {
       passenger.transfers++;
       p.queue.push(passenger);
+      emit?.('transferOut', t, passenger);
       handled++;
     }
   }
@@ -542,6 +547,7 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): void
     const r = route(passenger.shape, -1);
     if (t.passengers.length < capacity && r && r.line === t.line && r.next === next) {
       t.passengers.push(passenger);
+      emit?.('board', t, passenger);
       handled++;
     } else waiting.push(passenger);
   }
@@ -578,10 +584,16 @@ function spawnStation(s: State): void {
     return;
   }
 }
-export function advance(s: State): boolean {
+export function advance(s: State, observer?: ServiceObserver): boolean {
   if (s.phase !== 'playing') return false;
   s.tick++;
   s.elapsed++;
+  let sequence = 0;
+  const emit = observer ? (type: 'arrive' | 'deliver' | 'transferOut' | 'board' | 'depart', t: Train, passenger?: Passenger) => {
+    observer({ type, tick: s.tick, sequence: sequence++, stationId: t.from,
+      trainId: t.id, lineId: t.line, passengerId: passenger?.id ?? null,
+      shape: passenger?.shape ?? null });
+  } : undefined;
   if (s.elapsed >= s.nextStation && s.mode !== 'creative') {
     spawnStation(s);
     s.nextStation = s.elapsed + 340 + Math.floor(random(s) * 200);
@@ -610,16 +622,17 @@ export function advance(s: State): boolean {
       t.to = null;
       t.progress = 0;
       t.dwell = 0;
+      emit?.('arrive', t);
     }
     if (t.retiring) {
-      unload(s, t);
+      unload(s, t, emit);
       s.resources.locomotives++;
       s.resources.carriages += t.carriages;
       retired.push(t.id);
       continue;
     }
     if (t.moveTo) {
-      unload(s, t);
+      unload(s, t, emit);
       const target = t.moveTo;
       t.moveTo = null;
       const dest = s.lines.find((l) => l.id === target.line);
@@ -639,7 +652,7 @@ export function advance(s: State): boolean {
     }
     if (!l.stops.includes(t.from)) {
       // Finish old hop, unload at the removed station, then recover the empty train.
-      unload(s, t);
+      unload(s, t, emit);
       s.resources.locomotives++;
       s.resources.carriages += t.carriages;
       retired.push(t.id);
@@ -649,10 +662,11 @@ export function advance(s: State): boolean {
     t.direction = next.direction;
     if (t.dwell === 0) {
       g ??= graph(s);
-      service(s, t, next.id, g);
+      service(s, t, next.id, g, emit);
     }
     t.dwell--;
     if (t.dwell <= 0) {
+      emit?.('depart', t);
       t.to = next.id;
       t.progress = 0;
       t.dwell = 0;

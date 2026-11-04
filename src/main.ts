@@ -378,7 +378,7 @@ function update(): void {
   const s = controller.getState();
   controller.selectedLine = Math.min(controller.selectedLine, s.lines.length - 1);
   lastState = s;
-  renderer.render(s, controller.selectedLine);
+  renderer.render(s, controller.selectedLine, controller.drainServiceEvents());
   const sk = s.stations.map((p) => `${p.id}:${p.shape}`).join(',');
   if (sk !== stationKey) {
     stationKey = sk;

@@ -11,7 +11,8 @@ import {
   trackPoints,
   trackPosition,
 } from './rules';
-import type { City, Shape, State, Station } from './types';
+import type { City, ServiceEvent, Shape, State, Station } from './types';
+import { deriveTrackLayout } from './track-layout';
 
 const MAT = (color: THREE.ColorRepresentation, roughness = 0.85) =>
   new THREE.MeshStandardMaterial({ color, roughness, flatShading: true });
@@ -276,6 +277,7 @@ export class MetroRenderer {
   private manualCamera = false;
   private frameKey = '';
   private frameSize = { width: 22, height: 14 };
+  private previousTrainAnchors = new Map<number, THREE.Vector3>();
   private center = { x: 0, y: 0 };
   private bounds = { width: 1, height: 1 };
   constructor(private container: HTMLElement) {
@@ -459,6 +461,71 @@ export class MetroRenderer {
     );
     group.add(mesh(new THREE.TubeGeometry(colored, 1, 0.105, 8, false), MAT(color)));
   }
+  private drawLane(
+    points: { x: number; y: number }[], offset: number, radius: number,
+    color: string, group: THREE.Group, height: number,
+  ): void {
+    const vertices: THREE.Vector3[] = [];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
+      const dx = b.x - a.x, dz = b.y - a.y;
+      const length = Math.hypot(dx, dz);
+      if (length < 1e-6) continue;
+      const nx = dz / length, nz = -dx / length;
+      if (!vertices.length) vertices.push(new THREE.Vector3(a.x + nx * offset, height, a.y + nz * offset));
+      // Meet the adjacent offset segments with a bounded miter, avoiding a visible corner crack.
+      if (i < points.length - 1) {
+        const next = points[i + 1], ndx = next.x - b.x, ndz = next.y - b.y;
+        const nLength = Math.hypot(ndx, ndz);
+        if (nLength > 1e-6) {
+          const mx = ndz / nLength, mz = -ndx / nLength;
+          const scale = 1 + nx * mx + nz * mz;
+          if (scale > 0.5) {
+            const miter = offset / scale;
+            vertices.push(new THREE.Vector3(b.x + (nx + mx) * miter, height, b.y + (nz + mz) * miter));
+            continue;
+          }
+        }
+      }
+      vertices.push(new THREE.Vector3(b.x + nx * offset, height, b.y + nz * offset));
+    }
+    if (vertices.length < 2) return;
+    // Each offset segment remains straight through the station entrance.
+    for (let i = 1; i < vertices.length; i++) {
+      const path = new THREE.LineCurve3(vertices[i - 1], vertices[i]);
+      group.add(mesh(new THREE.TubeGeometry(path, 1, radius, 10, false), MAT(color)));
+    }
+  }
+  private laneOffset(s: State, lineId: number, from: number, to: number): number {
+    const segment = deriveTrackLayout(s).segments.find((edge) =>
+      (edge.from === from && edge.to === to) || (edge.from === to && edge.to === from));
+    const lane = segment?.lanes.find((item) => item.lineId === lineId);
+    if (!lane || !segment) return 0;
+    return from === segment.from ? lane.offset : -lane.offset;
+  }
+  private drawApproaches(s: State, layout: ReturnType<typeof deriveTrackLayout>): void {
+    for (const approach of layout.approaches) {
+      if (approach.lanes.length < 2 || new Set(approach.lanes.map((lane) => lane.neighborId)).size < 2) continue;
+      const origin = station(s, approach.stationId);
+      const length = 0.95;
+      const nx = approach.tangent.y, nz = -approach.tangent.x;
+      const start = { x: origin.x, y: origin.y };
+      const end = { x: origin.x + approach.tangent.x * length, y: origin.y + approach.tangent.y * length };
+      // End the colored overlay before a distinct branch diverges, to avoid an invented spur.
+      const diverge = Math.min(...approach.lanes.map((lane) => {
+        const far = station(s, lane.neighborId);
+        const points = trackPoints(origin, far);
+        return Math.hypot(points[1].x - origin.x, points[1].y - origin.y);
+      }));
+      if (diverge < length) continue;
+      this.drawLane([start, end], 0, 0.105, '#fffaf6', this.tracks, 0.20);
+      for (const lane of approach.lanes) {
+        const from = { x: start.x + nx * lane.offset, y: start.y + nz * lane.offset };
+        const to = { x: end.x + nx * lane.offset, y: end.y + nz * lane.offset };
+        this.drawLane([from, to], 0, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.49);
+      }
+    }
+  }
   showPreview(s: State, stops: number[], line: number, valid = true): void {
     disposeGroup(this.preview);
     for (let i = 1; i < stops.length; i++)
@@ -479,7 +546,7 @@ export class MetroRenderer {
     this.activeTransfers = [];
     this.transfers.clear();
   }
-  private updateTransfers(s: State): void {
+  private updateTransfers(s: State, events?: readonly ServiceEvent[]): void {
     const previous = this.loadSnapshot;
     const current: LoadSnapshot = {
       tick: s.tick,
@@ -493,7 +560,7 @@ export class MetroRenderer {
     };
     const delta = previous ? s.tick - previous.tick : 0;
     if (!previous || previous.seed !== s.seed || delta < 0 || delta > 8) this.clearTransfers();
-    if (previous && previous.seed === s.seed && delta > 0 && delta <= 8) {
+    if (previous && previous.seed === s.seed && delta > 0 && delta <= 8 && events === undefined) {
       let delivered = Math.max(0, s.score - previous.score);
       for (const t of s.trains) {
         const old = previous.trains.get(t.id);
@@ -524,6 +591,25 @@ export class MetroRenderer {
         }
       }
     }
+    if (events?.length && previous && previous.seed === s.seed && delta > 0) {
+      // The simulation log, not adjacent-render diffs, is authoritative across missed frames.
+      const valid = events.filter((event) => event.tick > previous.tick && event.tick <= s.tick)
+        .sort((a, b) => a.tick - b.tick || a.sequence - b.sequence);
+      for (const event of valid) {
+        if (event.type !== 'board' && event.type !== 'deliver' && event.type !== 'transferOut') continue;
+        if (event.passengerId === null || event.shape === null) continue;
+        const p = s.stations.find((item) => item.id === event.stationId);
+        if (!p) continue;
+        const waiting = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
+        const trainAnchor = this.previousTrainAnchors.get(event.trainId);
+        const door = trainAnchor && trainAnchor.distanceTo(new THREE.Vector3(p.x, 0.48, p.y)) < 2.2
+          ? new THREE.Vector3(trainAnchor.x, 1.14, trainAnchor.z)
+          : new THREE.Vector3(p.x, 1.14, p.y);
+        const boarding = event.type === 'board';
+        this.addTransfer(event.passengerId, event.shape, boarding ? 'board' : 'alight',
+          boarding ? waiting : door, boarding ? door : waiting, s.tick);
+      }
+    }
     // No simulated passengers are added; these are visual echoes of observed ID changes.
     for (const transfer of [...this.activeTransfers]) {
       const progress = (s.tick - transfer.tick) / 5;
@@ -546,8 +632,8 @@ export class MetroRenderer {
     this.transfers.add(sprite);
     this.activeTransfers.push({ sprite, start, end, tick });
   }
-  render(s: State, selectedLine = 0): void {
-    this.updateTransfers(s);
+  render(s: State, selectedLine = 0, events?: readonly ServiceEvent[]): void {
+    this.updateTransfers(s, events);
     if (this.city !== s.city) this.buildEnvironment(s.city);
     const frameKey = JSON.stringify(s.stations.map((p) => [p.x, p.y]));
     if (!this.manualCamera && frameKey !== this.frameKey) {
@@ -588,7 +674,7 @@ export class MetroRenderer {
         this.scene.add(g);
       }
       g.position.set(p.x, 0, p.y);
-      g.scale.setScalar(p.interchange ? 1.2 : 1);
+      g.scale.setScalar(p.interchange ? 1.3 : 1);
     }
     const ghost = s.trains.filter(
       (t) =>
@@ -601,15 +687,13 @@ export class MetroRenderer {
     if (key !== this.routeKey) {
       this.routeKey = key;
       disposeGroup(this.tracks);
-      for (const l of s.lines)
-        for (const [a, b] of segments(l))
-          this.track(
-            station(s, a),
-            station(s, b),
-            LINE_COLORS[l.id],
-            this.tracks,
-            (l.id - 2) * 0.055,
-          );
+      const layout = deriveTrackLayout(s);
+      for (const edge of layout.segments) {
+        this.drawLane(edge.points, 0, 0.105, '#fffaf6', this.tracks, 0.20);
+        for (const lane of edge.lanes)
+          this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43);
+      }
+      this.drawApproaches(s, layout);
       for (const t of ghost)
         this.track(
           station(s, t.from),
@@ -659,11 +743,15 @@ export class MetroRenderer {
       }
       const a = station(s, t.from),
         b = t.to !== null ? station(s, t.to) : a,
-        position = trackPosition(a, b, t.progress);
-      entry.group.position.set(position.x, 0.48, position.y);
+        position = trackPosition(a, b, t.progress),
+        lane = t.to !== null ? this.laneOffset(s, t.line, t.from, t.to) : 0,
+        tangent = new THREE.Vector2(Math.sin(position.angle), Math.cos(position.angle)),
+        lateral = new THREE.Vector2(tangent.y, -tangent.x);
+      entry.group.position.set(position.x + lateral.x * lane, 0.48, position.y + lateral.y * lane);
       if (t.to !== null) entry.group.rotation.y = position.angle;
       entry.group.visible = true;
     }
+    this.previousTrainAnchors = new Map([...this.trains].map(([id, entry]) => [id, entry.group.position.clone()]));
     this.renderer.render(this.scene, this.camera);
   }
   project(x: number, y: number, height = 0.6): { x: number; y: number } {
@@ -688,6 +776,7 @@ export class MetroRenderer {
     this.observer.disconnect();
     this.clearTransfers();
     this.loadSnapshot = null;
+    this.previousTrainAnchors.clear();
     disposeGroup(this.environment);
     disposeGroup(this.tracks);
     disposeGroup(this.preview);

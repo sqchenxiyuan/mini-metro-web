@@ -10,6 +10,7 @@ import type {
   Policy,
   Record,
   Replay,
+  ServiceEvent,
   State,
 } from './types';
 
@@ -34,6 +35,13 @@ export class MetroController {
   selectedLine = 0;
   onChange: () => void = () => {};
   capture: () => string = () => '';
+  drainServiceEvents(): ServiceEvent[] {
+    if (this.player || this.focusedState) {
+      this.session.drainServiceEvents();
+      return [];
+    }
+    return this.session.drainServiceEvents();
+  }
   constructor(options: Options = {}) {
     this.session = new Session(options);
     this.frame = requestAnimationFrame(this.loop);

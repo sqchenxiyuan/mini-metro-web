@@ -72,6 +72,20 @@ export interface Passenger {
   born: number;
   transfers: number;
 }
+/** Ephemeral simulation notification; never stored in State or replay checkpoints. */
+export interface ServiceEvent {
+  readonly type: 'arrive' | 'deliver' | 'transferOut' | 'board' | 'depart';
+  readonly tick: number;
+  /** Zero-based order within this tick, across all trains. */
+  readonly sequence: number;
+  readonly stationId: number;
+  readonly trainId: number;
+  readonly lineId: number;
+  /** Null for train-level arrive/depart notifications. */
+  readonly passengerId: number | null;
+  readonly shape: Shape | null;
+}
+export type ServiceObserver = (event: Readonly<ServiceEvent>) => void;
 export interface Station {
   id: number;
   x: number;
