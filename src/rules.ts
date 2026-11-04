@@ -470,12 +470,14 @@ export interface Route {
 function graph(s: State): Map<number, Edge[]> {
   const g = new Map<number, Edge[]>(s.stations.map((p) => [p.id, []]));
   for (const l of s.lines) {
-    // Empty lines cannot carry passengers; retiring trains don't count as service.
-    if (!s.trains.some((t) => t.line === l.id && !t.retiring && !t.moveTo)) continue;
+    // A loop has travel direction; a geometric shortcut against it is not serviceable.
+    const directions = new Set(s.trains.filter((t) => t.line === l.id && !t.retiring && !t.moveTo)
+      .map((t) => t.direction));
+    if (!directions.size) continue;
     for (const [a, b] of segments(l)) {
       const cost = trackLength(station(s, a), station(s, b)) / RULES.speed + 0.7;
-      g.get(a)!.push({ to: b, line: l.id, cost });
-      g.get(b)!.push({ to: a, line: l.id, cost });
+      if (!l.loop || directions.has(1)) g.get(a)!.push({ to: b, line: l.id, cost });
+      if (!l.loop || directions.has(-1)) g.get(b)!.push({ to: a, line: l.id, cost });
     }
   }
   return g;

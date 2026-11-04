@@ -91,6 +91,19 @@ describe('transport rules', () => {
     expect(transferred).toBe(true);
     expect(s.score).toBe(1);
   });
+  it('boards a rider toward the next stop on a one-way loop even when reverse is geographically shorter', () => {
+    const s = quiet();
+    s.resources.tunnels = 8;
+    const [a, b, c] = s.stations;
+    a.x = 0; a.y = 0; b.x = 9; b.y = 0; c.x = 1; c.y = 0;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [a.id, b.id, c.id], loop: true }).ok).toBe(true);
+    const t = s.trains[0];
+    t.from = a.id; t.direction = 1; t.dwell = 0;
+    const p = passenger(s, c.shape);
+    a.queue.push(p);
+    advance(s);
+    expect(t.passengers.map((r) => r.id)).toContain(p.id);
+  });
   it('does not board unreachable destinations or serve lines without locomotives', () => {
     const s = quiet();
     station(s, 1).queue = [passenger(s, 'star')];
