@@ -59,7 +59,7 @@ function disposeGroup(group: THREE.Group): void {
   group.clear();
 }
 // The destination silhouette is the station architecture, not a character.
-function stationOutline(shape: Shape, radius: number): THREE.Shape {
+export function stationOutline(shape: Shape, radius: number): THREE.Shape {
   const outline = new THREE.Shape();
   if (shape === 'circle') {
     outline.absarc(0, 0, radius, 0, Math.PI * 2, false);
@@ -78,6 +78,17 @@ function stationOutline(shape: Shape, radius: number): THREE.Shape {
       const r = i % 2 ? 0.48 : 1;
       return [Math.sin(a) * r, Math.cos(a) * r];
     });
+  } else if (shape === 'pentagon') {
+    points = Array.from({ length: 5 }, (_, i) => [Math.sin(i * 2 * Math.PI / 5), Math.cos(i * 2 * Math.PI / 5)]);
+  } else if (shape === 'egg') {
+    points = Array.from({ length: 16 }, (_, i) => {
+      const a = i * 2 * Math.PI / 16;
+      return [Math.sin(a) * (0.75 - Math.cos(a) * 0.17), Math.cos(a)];
+    });
+  } else if (shape === 'gem') {
+    points = [[-0.8, 0.44], [-0.48, 0.86], [0.48, 0.86], [0.8, 0.44], [0.57, -0.68], [0, -1], [-0.57, -0.68]];
+  } else if (shape === 'wedge') {
+    points = [[-0.9, -0.86], [0.86, -0.86], [0.86, 0.98]];
   } else {
     points = [[-0.34, 1], [-0.34, 0.34], [-1, 0.34], [-1, -0.34],
       [-0.34, -0.34], [-0.34, -1], [0.34, -1], [0.34, -0.34],
@@ -123,10 +134,14 @@ function makeStation(p: Station): THREE.Group {
     diamond: ['#aad2ed', '#456e9a'],
     star: ['#f4d28e', '#967039'],
     cross: ['#eeb8ac', '#a15c60'],
+    pentagon: ['#d9c4ef', '#6a558a'],
+    egg: ['#e7d9aa', '#827144'],
+    gem: ['#b0dce7', '#3d7885'],
+    wedge: ['#d9c6b0', '#80604b'],
   };
   const [roof, sign] = palettes[p.shape];
   // Soft, rounded station roofs with a pale rim and contrasting destination signs.
-  g.add(stationSlab('circle', 0.61, 0.23, 0.05, '#fffaf6', 0.045));
+  g.add(stationSlab(p.shape, 0.61, 0.23, 0.05, '#fffaf6', 0.045));
   g.add(stationSlab(p.shape, 0.43, 0.33, 0.2, '#91b4c4', 0.035));
   g.add(stationSlab(p.shape, 0.53, 0.53, 0.035, '#fff9f5', 0.045));
   g.add(stationSlab(p.shape, 0.5, 0.6, 0.09, roof, 0.055));

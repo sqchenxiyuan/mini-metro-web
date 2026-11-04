@@ -1,5 +1,12 @@
+@font-face {
+  font-family: 'Noto Sans SC Metro';
+  src: url('/fonts/NotoSansSC-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
 :root {
-  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: 'Noto Sans SC Metro', 'Segoe UI', 'Microsoft YaHei', sans-serif;
   color: #3c514a;
   background: #f6f4eb;
   font-synthesis: none;

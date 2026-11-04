@@ -1,4 +1,5 @@
 import { chromium } from '@playwright/test';
+import { browserLaunchOptions } from './browser-launch.mjs';
 import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -54,7 +55,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const agentUrl = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch(browserLaunchOptions());
 const errors = [],
   external = [];
 const page = await browser.newPage({
@@ -138,7 +139,7 @@ try {
   }, complete.replay);
   assert.equal(hash(final), complete.replay.finalHash);
   await page.click('#decisions-earlier');
-  await page.waitForTimeout(150);
+  await page.waitForFunction(() => !!document.querySelector('#decision-list [data-decision="0"]'), null, { timeout: 2000 });
   assert.equal(await page.locator('#decision-list [data-decision="0"]').count(), 1);
   await page.click('#decisions-later');
   const snapshots = await page.evaluate(() => {

@@ -10,7 +10,8 @@ npm run dev          # http://127.0.0.1:5175
 npm run build
 npm run preview      # http://127.0.0.1:4175
 npm test
-npm run test:browser
+npx playwright install chromium # 初次安装；容器内可设置 PLAYWRIGHT_BROWSERS_PATH 为可写目录
+npm run test:browser # 默认用 Playwright 管理的 Chromium；METRO_BROWSER_EXECUTABLE_PATH 可选指定浏览器
 npm run test:campaign # 三地图 × 四模式 × 两种子
 npm run test:sdk      # 真实打包安装验证
 npm run demo:agent
@@ -25,7 +26,19 @@ Agent 接口的观察字段、动作、HTTP 示例和内部状态边界见 [AGEN
 
 本项目实现三张原创地图与经典、无尽、极限、创意四种模式。具体差异见 FIDELITY.md；不能将功能覆盖率当作已实测达到原版 90% 还原。
 
+十种 Workshop 文档支持的车站形状已可在创意模式手动选择，目的地、渲染与回放也支持这些形状。普通/无尽/极限的自动扩站仍使用本版旧规则，只会生成其中六种；原版各城市的特殊形状池、生成时序与替换行为尚未对照或实现。该增加不表示已实现与原版的城市级生成一致性。
+
 界面名称为「小小地铁 / Little Metro」。为兼容已有脚本、存档与录像，包名、协议、地图键 `orchard` 和发布文件名继续沿用原技术标识 `orchard-metro`。
+
+`npm run test:browser` 需先运行 `npm run build` 和本地预览服务；`PLAYWRIGHT_BROWSERS_PATH` 可用于容器中的浏览器缓存。`PLAYWRIGHT_BROWSERS_PATH=… node scripts/ui-verify.mjs` 验收地图优先的桌面/手机 UI、错误提示与同种子重试；`VITE_BASE_PATH=/mini-metro-web/ npm run build` 后运行 `node scripts/pages-verify.mjs` 验证 Pages 子路径下字体及所有静态资源加载。局中中文使用随站点自托管的 Noto Sans SC 字体，许可证见 `public/fonts/OFL.txt` 和 `NOTICE.md`。
+
+**首版地图边界：** `src/map-generation.ts` 提供独立、可验证的城市区域/站型池/日程原型及种子事件记录；它是尚未接入线上游戏的 opt-in `rules.2` 提案。线上游玩仍沿用 `rules.1` 的三张原创城统一扩站器，以保持旧录像哈希/兼容性；城市原版参数、真实特殊站替换规则和 `rules.2` 游戏/回放集成仍待原版实机差分。不要把地图原型测试通过写成已上线的城市级生成。
+
+## GitHub Pages 部署
+
+提交到 `main` 后，`.github/workflows/pages.yml` 会运行 `npm ci`、`npm test`、`npm run build`，并仅将构建产物 `dist/` 作为静态站点部署到 [GitHub Pages](https://sqchenxiyuan.github.io/mini-metro-web/)。仓库所有者需先在 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**；不需要部署密钥或额外服务端。工作流需要允许 GitHub Actions 运行，`GITHUB_TOKEN` 权限在工作流中声明为 `contents:read`、`pages:write`、`id-token:write`。首次发布需要将工作流推送到 `main` 并等待构建与部署成功，公开地址并非当前本地修改已上线的证明。
+
+Pages 构建通过 `VITE_BASE_PATH=/mini-metro-web/` 指定仓库子路径；本地未设置该变量时保持相对资源路径，`npm run dev` 和 `npm run preview` 仍可从根路径访问。可用 `VITE_BASE_PATH=/mini-metro-web/ npm run build` 本地检查待发布资产；Pages 只上传 `dist/`，不会上传源码或 `dist-sdk/`。这是独立的可玩 Web 版本，不代表与原版功能完全一致。
 
 ## 独立 SDK
 

@@ -3,6 +3,7 @@ import './style.css';
 import './minimal.css';
 import { MetroController } from './browser';
 import { MetroRenderer } from './renderer';
+import { creativeStationPicker } from './station-picker';
 import { MetroAudio } from './audio';
 import { observeState } from './session';
 import {
@@ -26,7 +27,7 @@ import type { Action, City, Mode, Options, Replay, Shape, State } from './types'
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
 <header class="topbar">
-  <div class="brand"><span class="brand-mark"><i></i><i></i><i></i></span><h1>小小地铁</h1></div>
+  <span class="brand" aria-hidden="true"></span>
   <div class="city-heading"><strong id="city-name">河湾新城</strong><span id="mode-label">经典模式</span></div>
   <div class="score-block"><span class="score-icon">♧</span><div><strong id="score">0</strong><span>已送达乘客</span></div></div>
   <div class="header-actions"><button id="new-game" class="text-button">新局</button><button id="tools-toggle" class="text-button" aria-expanded="false" aria-controls="inspector">调度</button><button id="replay-toggle" class="text-button" aria-expanded="false" aria-controls="inspector">回放</button><button id="help" class="icon-button" title="游玩说明">?</button></div>
@@ -69,7 +70,7 @@ app.innerHTML = `
     </section>
   </aside>
 </main>
-<footer class="transport-bar"><div class="transport-controls"><button id="play-pause" class="play-button" aria-label="播放或暂停">▶</button><div class="speed-switch"><button data-speed="1" class="active">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button></div></div><div id="resources" class="resources" aria-label="剩余调度资源"></div><div class="day-progress"><span id="day-clock">星期一</span><div><i id="day-fill"></i></div><span id="clock">00:00</span></div><div class="footer-right"><span id="control-label">手动规划</span><button id="sound" class="icon-button" title="声音开关">♫</button></div></footer>
+<footer class="transport-bar"><div class="transport-controls"><button id="play-pause" class="play-button" aria-label="播放或暂停">▶</button><div class="speed-switch" aria-label="运行速度"><button data-speed="1" class="active" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button><button data-speed="4" aria-pressed="false">4×</button></div></div><div id="resources" class="resources" aria-label="剩余调度资源"></div><div class="day-progress"><span id="day-clock">星期一</span><div><i id="day-fill"></i></div><span id="clock">00:00</span></div><div class="footer-right"><span id="control-label">手动规划</span><button id="sound" class="icon-button" title="声音开关">♫</button></div></footer>
 <dialog id="settings-dialog"><form id="settings-form"><span class="eyebrow">LET'S BUILD A LITTLE CITY</span><h2>开始一段新旅程</h2><label>目的地<select id="city-select"><option value="orchard">河湾新城 · 蜿蜒的单河城市</option><option value="harbor">东岸港湾 · 城市东侧的河湾</option><option value="islands">双子群岛 · 两条河流，三片陆地</option></select></label><label>模式<select id="mode-select"><option value="normal">经典 · 拥挤过久将结束旅程</option><option value="endless">无尽 · 保留需求，没有拥挤失败</option><option value="extreme">极限 · 线路只能从端点延长</option><option value="creative">创意 · 充足资源，可手动建站</option></select></label><label>地图种子<input id="seed-input" type="number" min="0" max="4294967295" value="420"/></label><div class="button-pair"><button type="button" id="settings-cancel">再逛一会儿</button><button class="primary" type="submit">出发 ↗</button></div></form></dialog>
 <dialog id="help-dialog"><span class="eyebrow">A POCKET GUIDE</span><h2>地铁乘车指南</h2><ol><li>乘客的形状就是目的地。把不同形状的车站连起来；列车会自动接送和换乘。</li><li>选左侧线路，再从车站拖到另一站。可以连续拖过多站；从端点继续延长，拖回起点闭合环线。</li><li>点“重画线路”重新规划。右键车站可将它移出所选线路；也可在右侧移除。旧路段的列车会先到站再清客。</li><li>每台列车 6 个座位，每节车厢增加 6 个。调度栏可增派、加挂、回收列车或调往别的线路。</li><li>每段跨河连接消耗隧道。车站超过 6 人开始计时，持续 45 秒将结束旅程；减少到 6 人以下，计时会逐渐恢复。枢纽容量为 18 人。</li><li>空格暂停，1–7 选线。每周免费获得一台机车，再选一项补给。可随时暂停规划。</li><li>“旅程回放”支持导入、导出、拖动时间和重建决策前的局面。Agent 决策说明是控制器提供的公开摘要。</li></ol><p class="muted">Mini Metro 核心玩法的独立重建；3 张原创地图、原创程序化画面与音效。原版城市数据及精确节奏未对齐，验证边界见随附 FIDELITY.md。</p><button id="help-close" class="primary full">开始规划</button></dialog>
 <dialog id="decision-dialog"><span class="eyebrow">AT THE MOMENT OF DECISION</span><h2>决策现场</h2><div id="decision-content"></div><button id="decision-close" class="primary full">返回旅程</button></dialog>
@@ -111,8 +112,10 @@ function clock(tick: number): string {
   const sec = Math.floor(tick / RULES.hz);
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }
-function toast(text: string): void {
+function toast(text: string, error = false): void {
   $('toast').textContent = text;
+  $('toast').setAttribute('role', error ? 'alert' : 'status');
+  $('toast').classList.toggle('error', error);
   $('toast').classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => $('toast').classList.remove('show'), 3600);
@@ -120,11 +123,11 @@ function toast(text: string): void {
 function act(action: Action, reason: string): boolean {
   try {
     const r = controller.submit({ action, reason }, 'human');
-    toast(r.message);
+    toast(r.message, !r.ok);
     if (r.ok) audio.note(440, 0.09);
     return r.ok;
   } catch (e) {
-    toast(String(e));
+    toast(String(e), true);
     return false;
   }
 }
@@ -139,8 +142,11 @@ function resetView(): void {
   renderer.resetCamera();
   setLineTools(false);
   setInspector(false);
-  $('station-detail').innerHTML =
-    '<span class="eyebrow">STATION NOTES</span><p>点一下车站，查看等候乘客<br>和它连接的线路。</p>';
+  const creative = controller.getState().mode === 'creative';
+  $('station-detail').innerHTML = creative
+    ? `<span class="eyebrow">CREATIVE CITY</span><p>选择站型，再点击空白地面建站。</p>${creativeStationPicker()}`
+    : '<span class="eyebrow">STATION NOTES</span><p>点一下车站，查看等候乘客<br>和它连接的线路。</p>';
+  detailKey = creative ? 'creative' : '';
 }
 function setInspector(open: boolean): void {
   $('inspector').hidden = !open;
@@ -419,6 +425,7 @@ function update(): void {
   $('day-fill').style.width = `${((s.elapsed % RULES.weekTicks) / RULES.weekTicks) * 100}%`;
   $('clock').textContent = clock(s.tick);
   $('play-pause').textContent = controller.paused ? '▶' : 'Ⅱ';
+  $('play-pause').setAttribute('aria-label', controller.paused ? '播放' : '暂停');
   $('map-status').textContent =
     controller.mode === 'replay'
       ? controller.focusedDecision !== null
@@ -503,7 +510,7 @@ function update(): void {
   if (s.mode === 'creative' && !p && detailKey !== 'creative') {
     detailKey = 'creative';
     $('station-detail').innerHTML =
-      '<span class="eyebrow">CREATIVE CITY</span><p>资源已备齐。选择一种形状，再点击空白地面建站。</p><button id="create-station" class="soft-button full">＋ 添加车站</button>';
+      `<span class="eyebrow">CREATIVE CITY</span><p>选择站型，再点击空白地面建站。</p>${creativeStationPicker()}`;
   }
   const records = controller.decisions,
     last =
@@ -545,7 +552,7 @@ function update(): void {
         `<div class="supply-stamp">✦</div><span class="eyebrow">A NEW WEEK, A LITTLE GIFT</span><h2>第 ${s.week} 周，继续出发。</h2><p>一台新机车已入库。再为小镇挑一份补给：</p><div class="upgrade-options">${s.upgrades.map((choice) => `<button data-upgrade="${choice}"><b>${choice === 'line' ? '⌁' : choice === 'carriage' ? '▰ ▱' : choice === 'tunnels' ? '⌒ ⌒' : '✦'}</b><strong>${UPGRADE_NAMES[choice]}</strong></button>`).join('')}</div>`;
     if (s.phase === 'over')
       $('game-over').innerHTML =
-        `<div class="supply-stamp">♧</div><span class="eyebrow">THANK YOU FOR THE JOURNEY</span><h2>小镇需要休息一会儿。</h2><p>${s.lostStation} 站拥挤过久。这段旅程共送达</p><strong class="final-score">${s.score}<small> 位乘客</small></strong><div class="button-pair"><button id="over-replay">回看这段旅程</button><button id="over-restart" class="primary">再开一局 ↗</button></div>`;
+        `<div class="supply-stamp">♧</div><span class="eyebrow">THANK YOU FOR THE JOURNEY</span><h2>小镇需要休息一会儿。</h2><p>${s.lostStation} 站拥挤过久。这段旅程共送达</p><strong class="final-score">${s.score}<small> 位乘客</small></strong><div class="button-pair"><button id="over-replay">回看这段旅程</button><button id="over-restart" class="primary">相同种子重试 ↗</button><button id="over-new-seed">新种子开局</button></div>`;
   }
 }
 controller.onChange = update;
@@ -625,8 +632,11 @@ document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach(
     (b.onclick = () => {
       controller.setSpeed(Number(b.dataset.speed));
       document
-        .querySelectorAll('[data-speed]')
-        .forEach((e) => e.classList.toggle('active', e === b));
+        .querySelectorAll<HTMLButtonElement>('[data-speed]')
+        .forEach((e) => {
+          e.classList.toggle('active', e === b);
+          e.setAttribute('aria-pressed', String(e === b));
+        });
     }),
 );
 $('agent-toggle').onclick = () => {
@@ -805,14 +815,19 @@ app.addEventListener('click', (e) => {
     act({ type: 'interchange', station: selectedStation }, '扩建候车与换乘空间。');
   if (target.id === 'remove-station' && selectedStation !== null) removeStation(selectedStation);
   if (target.id === 'over-replay') replayCurrent();
-  if (target.id === 'over-restart') {
+  if (target.id === 'over-restart' || target.id === 'over-new-seed') {
     const s = controller.getState();
     saveLocal(true);
-    controller.restart({ seed: (s.seed + 1) >>> 0, city: s.city, mode: s.mode });
+    controller.restart({
+      seed: target.id === 'over-restart' ? s.seed : (s.seed + 1) >>> 0,
+      city: s.city,
+      mode: s.mode,
+    });
     resetView();
   }
-  if (target.id === 'create-station') {
-    const shape = SHAPES[controller.getState().stations.length % SHAPES.length];
+  if (target.dataset.stationShape) {
+    const shape = target.dataset.stationShape as Shape;
+    if (!SHAPES.includes(shape)) return;
     placing = shape;
     toast(`点击地图空白处，建造 ${GLYPHS[shape]} 车站。`);
   }

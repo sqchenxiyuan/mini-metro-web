@@ -26,7 +26,7 @@ export const RULES = Object.freeze({
   maxTrains: 32,
   maxCarriages: 3,
 });
-export const SHAPES: Shape[] = ['circle', 'triangle', 'square', 'diamond', 'star', 'cross'];
+export const SHAPES: Shape[] = ['circle', 'triangle', 'square', 'diamond', 'star', 'cross', 'pentagon', 'egg', 'gem', 'wedge'];
 export const GLYPHS: Record<Shape, string> = {
   circle: '●',
   triangle: '▲',
@@ -34,6 +34,10 @@ export const GLYPHS: Record<Shape, string> = {
   diamond: '◆',
   star: '★',
   cross: '✚',
+  pentagon: '⬟',
+  egg: '⬭',
+  gem: '⬡',
+  wedge: '◢',
 };
 export const LINE_COLORS = [
   '#e98391',

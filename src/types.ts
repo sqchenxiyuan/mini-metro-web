@@ -1,8 +1,66 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-export type Shape = 'circle' | 'triangle' | 'square' | 'diamond' | 'star' | 'cross';
+export type Shape = 'circle' | 'triangle' | 'square' | 'diamond' | 'star' | 'cross' | 'pentagon' | 'egg' | 'gem' | 'wedge';
 export type City = 'orchard' | 'harbor' | 'islands';
 export type Mode = 'normal' | 'endless' | 'extreme' | 'creative';
 export type Upgrade = 'line' | 'carriage' | 'tunnels' | 'interchange';
+/** Experimental map-v2 schema; project proposals, not original-game city data. */
+export interface MapPoint { x: number; y: number }
+export interface MapArea {
+  id: string;
+  polygon: MapPoint[];
+  /** Relative area preference after a shape is selected; NOT a city-wide shape probability. */
+  shapeWeights: Partial<{ [K in Shape]: number }>;
+  activeDay: number;
+  maximum: number;
+}
+export interface MapSchedule {
+  id: string;
+  types: Shape[];
+  durationDays: number;
+  cooldownDays: number;
+  randomness: number;
+}
+export interface MapDefinition {
+  id: City;
+  rulesVersion: 'orchard-metro.rules.2';
+  viewport: { minX: number; maxX: number; minY: number; maxY: number };
+  obstacles: MapPoint[][];
+  startStations: { x: number; y: number; shape: Shape }[];
+  normalShapes: Shape[];
+  areas: MapArea[];
+  schedules: MapSchedule[];
+  separation: number;
+  waterMargin: number;
+  maxAttempts: number;
+  maxRetries: number;
+}
+export interface MapSpawnEvent {
+  rulesVersion: MapDefinition['rulesVersion'];
+  mapId: City;
+  seed: number;
+  tick: number;
+  scheduleId: string;
+  shape: Shape;
+  areaId: string | null;
+  position: MapPoint | null;
+  attempts: number;
+  result: 'spawned' | 'retry' | 'blocked';
+  reason?: 'no-area' | 'no-point' | 'maximum' | 'station-limit';
+}
+export interface MapRun {
+  version: MapDefinition['rulesVersion'];
+  mapId: City;
+  definitionHash: string;
+  seed: number;
+  rng: number;
+  tick: number;
+  stations: { x: number; y: number; shape: Shape }[];
+  events: MapSpawnEvent[];
+  pending: { shape: Shape; scheduleId: string; tick: number; retries: number }[];
+  nextBatch: number;
+  batchIndex: number;
+  blocked: boolean;
+}
 export interface Options {
   seed?: number;
   city?: City;
