@@ -59,9 +59,94 @@ describe('transport rules', () => {
   });
   it('uses a new replay/rules version when tick cadence changes', () => {
     const s = new Session({ seed: 42 });
-    expect(s.getState().version).toBe('orchard-metro.rules.4');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v4');
+    expect(s.getState().version).toBe('orchard-metro.rules.5');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v5');
     expect(() => new ReplayPlayer({ ...s.exportReplay(), format: 'orchard-metro.replay.v3' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
+  });
+  it('versions the destination weighting change in rules and replays', () => {
+    const session = new Session({ seed: 42 });
+    expect(session.getState().version).toBe('orchard-metro.rules.5');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v5');
+    expect(() => new ReplayPlayer({ ...session.exportReplay(), format: 'orchard-metro.replay.v4' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
+  });
+  it('never chooses the origin shape when no matching destination exists', () => {
+    const s = createState({ seed: 91, mode: 'creative' });
+    for (const p of s.stations) p.shape = 'circle';
+    s.stations[0].nextPassenger = 1;
+    for (const p of s.stations.slice(1)) p.nextPassenger = 1e8;
+    advance(s);
+    expect(s.stations[0].queue).toEqual([]);
+    expect(s.totalSpawned).toBe(0);
+    s.stations[2].shape = 'diamond';
+    s.stations[0].nextPassenger = s.elapsed + 1;
+    advance(s);
+    expect(s.stations[0].queue.map((p) => p.shape)).toEqual(['diamond']);
+  });
+  it('does not spike the new special shape demand across ordinary city growth', () => {
+    const s = createState({ seed: 420, mode: 'normal' });
+    s.nextStation = 1;
+    for (let i = 0; i < 6; i++) {
+      advance(s);
+      s.nextStation = s.elapsed + 1;
+    }
+    expect(s.stations.map((p) => p.shape)).toContain('diamond');
+    const origins = s.stations.filter((p) => p.shape !== 'diamond');
+    for (const p of s.stations) p.nextPassenger = 1e8;
+    let diamond = 0, generated = 0;
+    for (let i = 0; i < 400; i++) {
+      for (const p of origins) p.nextPassenger = s.elapsed + 1;
+      advance(s);
+      for (const p of origins) {
+        const last = p.queue.at(-1);
+        if (last?.born === s.elapsed) {
+          if (last.shape === 'diamond') diamond++;
+          generated++;
+        }
+        p.queue = [];
+      }
+    }
+    expect(generated).toBeGreaterThan(0);
+    expect(diamond / generated).toBeLessThan(0.2);
+  });
+  it('keeps a rare special destination below its station-share demand across multiple seeded runs', () => {
+    for (const seed of [1, 17, 420, 9001]) {
+      const s = createState({ seed, mode: 'creative' });
+      const source = s.stations[0];
+      const starting = [...s.stations];
+      for (let i = 0; i < 4; i++) for (const base of starting)
+        s.stations.push({ ...base, id: s.nextId++, queue: [], nextPassenger: 1e8 });
+      s.stations.push({ ...source, id: s.nextId++, shape: 'star', queue: [], nextPassenger: 1e8 });
+      for (const p of s.stations) p.nextPassenger = 1e8;
+      let special = 0;
+      for (let i = 0; i < 600; i++) {
+        source.nextPassenger = s.elapsed + 1;
+        advance(s);
+        if (source.queue[0].shape === 'star') special++;
+        source.queue = [];
+      }
+      expect(special).toBeLessThan(100);
+    }
+  });
+  it('weights destination shapes by the number of existing stations, not distinct shapes', () => {
+    const s = createState({ seed: 420, mode: 'creative' });
+    const source = s.stations[0];
+    // One rare special station among many ordinary ones: each destination station
+    // gets one weight, rather than giving the rare shape a third of all demand.
+    for (let i = 0; i < 3; i++) for (const base of s.stations.slice(0, 3))
+      s.stations.push({ ...base, id: s.nextId++, queue: [], nextPassenger: 1e8 });
+    s.stations.push({ ...source, id: s.nextId++, shape: 'diamond', queue: [], nextPassenger: 1e8 });
+    for (const p of s.stations) p.nextPassenger = 1e8;
+    let special = 0;
+    const samples = 2000;
+    for (let i = 0; i < samples; i++) {
+      source.nextPassenger = s.elapsed + 1;
+      advance(s);
+      expect(source.queue).toHaveLength(1);
+      if (source.queue[0].shape === 'diamond') special++;
+      source.queue = [];
+    }
+    expect(special / samples).toBeGreaterThan(0.06);
+    expect(special / samples).toBeLessThan(0.16);
   });
   it('uses the same octilinear track in both travel directions', () => {
     const a = { x: -3, y: -3 },
@@ -266,14 +351,14 @@ describe('transport rules', () => {
   });
   it('rejects old rules-2 replays instead of silently applying changed transfer timing', () => {
     const session = new Session({ seed: 13 });
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v4');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v5');
     const old = { ...session.exportReplay(), format: 'orchard-metro.replay.v2' };
     expect(() => new ReplayPlayer(old as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('rejects an old rules-1 replay after the boarding rules change', () => {
     const s = new Session({ seed: 13 });
-    expect(s.getState().version).toBe('orchard-metro.rules.4');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v4');
+    expect(s.getState().version).toBe('orchard-metro.rules.5');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v5');
     const legacy = { ...s.exportReplay(), format: 'orchard-metro.replay.v1' };
     expect(() => new ReplayPlayer(legacy as unknown as import('../src/types').Replay)).toThrow();
   });

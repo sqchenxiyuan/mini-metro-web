@@ -77,7 +77,7 @@ export class Session {
   constructor(options: Options = {}) {
     this.state = createState(options);
     this.recording = {
-      format: 'orchard-metro.replay.v4',
+      format: 'orchard-metro.replay.v5',
       createdAt: new Date().toISOString(),
       options: { seed: this.state.seed, city: this.state.city, mode: this.state.mode },
       duration: 0,
@@ -179,7 +179,7 @@ export class ReplayPlayer {
     const r = JSON.parse(json) as Replay;
     if (
       !r ||
-      r.format !== 'orchard-metro.replay.v4' ||
+      r.format !== 'orchard-metro.replay.v5' ||
       typeof r.createdAt !== 'string' ||
       r.createdAt.length > 40 ||
       !Number.isFinite(Date.parse(r.createdAt)) ||

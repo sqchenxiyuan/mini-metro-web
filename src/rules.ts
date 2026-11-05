@@ -205,7 +205,7 @@ export function createState(options: Options = {}): State {
   )
     throw new Error('非法开局参数');
   const s: State = {
-    version: 'orchard-metro.rules.4',
+    version: 'orchard-metro.rules.5',
     seed,
     rng: seed || 1,
     tick: 0,
@@ -619,12 +619,13 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
     spawnStation(s);
     s.nextStation = s.elapsed + 850 + Math.floor(random(s) * 500);
   }
-  const available = [...new Set(s.stations.map((p) => p.shape))];
   for (const p of s.stations) {
     if (s.elapsed >= p.nextPassenger) {
-      const shapes = available.filter((shape) => shape !== p.shape);
-      if (shapes.length && p.queue.length < 160) {
-        const shape = shapes[Math.floor(random(s) * shapes.length)];
+      // Each eligible station contributes one destination weight; a rare
+      // special shape therefore does not receive equal demand to common shapes.
+      const destinations = s.stations.filter((target) => target.shape !== p.shape);
+      if (destinations.length && p.queue.length < 160) {
+        const shape = destinations[Math.floor(random(s) * destinations.length)].shape;
         p.queue.push({ id: s.nextId++, shape, born: s.elapsed, transfers: 0 });
         s.totalSpawned++;
       }
