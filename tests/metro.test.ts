@@ -32,7 +32,7 @@ function population(s: State): number {
   return (
     s.score +
     s.stations.reduce((n, p) => n + p.queue.length, 0) +
-    s.trains.reduce((n, t) => n + t.passengers.length, 0)
+    s.trains.reduce((n, t) => n + t.passengers.length + (t.transfer ? 1 : 0), 0)
   );
 }
 
@@ -103,6 +103,8 @@ describe('transport rules', () => {
     const p = passenger(s, c.shape);
     a.queue.push(p);
     advance(s);
+    expect(forward.transfer?.passenger.id).toBe(p.id);
+    ticks(s, 3);
     expect(forward.passengers.map((r) => r.id)).toContain(p.id);
   });
   it('boards a rider toward the next stop on a one-way loop even when reverse is geographically shorter', () => {
@@ -116,6 +118,8 @@ describe('transport rules', () => {
     const p = passenger(s, c.shape);
     a.queue.push(p);
     advance(s);
+    expect(t.transfer?.passenger.id).toBe(p.id);
+    ticks(s, 3);
     expect(t.passengers.map((r) => r.id)).toContain(p.id);
   });
   it('does not board unreachable destinations or serve lines without locomotives', () => {
@@ -150,7 +154,7 @@ describe('transport rules', () => {
     t.dwell = 0;
     station(s, 1).queue = Array.from({ length: 5 }, () => passenger(s, 'square'));
     s.totalSpawned = 5;
-    ticks(s, 25);
+    ticks(s, 38);
     expect(t.to).toBe(3);
     expect(t.passengers).toHaveLength(5);
     applyAction(s, { type: 'route', line: 0, stops: [] });
@@ -170,8 +174,8 @@ describe('transport rules', () => {
     t.dwell = 0;
     station(s, 1).queue = Array.from({ length: 14 }, () => passenger(s, 'triangle'));
     advance(s);
-    expect(t.passengers).toHaveLength(1);
-    ticks(s, 10);
+    expect(t.transfer).toMatchObject({ direction: 'board', progress: 0 });
+    ticks(s, 25);
     expect(t.passengers).toHaveLength(6);
     expect(station(s, 1).queue).toHaveLength(8);
     s.resources.carriages = 1;
@@ -222,10 +226,28 @@ describe('transport rules', () => {
     expect(applyAction(s, { type: 'upgrade', choice: s.upgrades[0] }).ok).toBe(true);
     expect(s.phase).toBe('playing');
   });
+  it('reconstructs a mid-transfer state at the same tick during replay', () => {
+    const session = new Session({ mode: 'creative', seed: 19 });
+    const [a, b] = session.getState().stations;
+    expect(session.submit({ action: { type: 'route', line: 0, stops: [a.id, b.id] } }).ok).toBe(true);
+    // Use natural spawning to ensure the rider and its route are recorded deterministically.
+    for (let i = 0; i < 1200 && !session.getState().trains.some((t) => t.transfer); i++) session.step(1);
+    const snapshot = session.getState();
+    expect(snapshot.trains.some((t) => t.transfer)).toBe(true);
+    const replay = session.exportReplay();
+    const player = new ReplayPlayer(replay);
+    expect(player.seek(snapshot.tick)).toEqual(snapshot);
+  });
+  it('rejects old rules-2 replays instead of silently applying changed transfer timing', () => {
+    const session = new Session({ seed: 13 });
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v3');
+    const old = { ...session.exportReplay(), format: 'orchard-metro.replay.v2' };
+    expect(() => new ReplayPlayer(old as import('../src/types').Replay)).toThrow(/录像结构不合法/);
+  });
   it('rejects an old rules-1 replay after the boarding rules change', () => {
     const s = new Session({ seed: 13 });
-    expect(s.getState().version).toBe('orchard-metro.rules.2');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v2');
+    expect(s.getState().version).toBe('orchard-metro.rules.3');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v3');
     const legacy = { ...s.exportReplay(), format: 'orchard-metro.replay.v1' };
     expect(() => new ReplayPlayer(legacy as unknown as import('../src/types').Replay)).toThrow();
   });

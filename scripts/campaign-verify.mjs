@@ -13,7 +13,7 @@ for (const city of ['orchard', 'harbor', 'islands'])
       const population =
         s.score +
         s.stations.reduce((n, p) => n + p.queue.length, 0) +
-        s.trains.reduce((n, t) => n + t.passengers.length, 0);
+        s.trains.reduce((n, t) => n + t.passengers.length + (t.transfer ? 1 : 0), 0);
       assert.equal(population, s.totalSpawned);
       assert.ok(tunnelsUsed(s) <= s.resources.tunnels);
       if (mode === 'endless' || mode === 'creative') assert.equal(s.tick, 12000);

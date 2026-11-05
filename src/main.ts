@@ -800,7 +800,7 @@ function refreshHistory(): void {
     history()
       .map(
         (item, i) =>
-          `<button class="history-row" data-history="${i}" ${item.replay.format !== 'orchard-metro.replay.v2' ? 'disabled title="旧版录像与新版规则不兼容"' : ''}><span>↺ ${escape(item.name)}${item.replay.format !== 'orchard-metro.replay.v2' ? ' · 旧版不可回放' : ''}</span><small>${escape(item.replay.createdAt.slice(0, 16).replace('T', ' '))}</small></button>`,
+          `<button class="history-row" data-history="${i}" ${item.replay.format !== 'orchard-metro.replay.v3' ? 'disabled title="旧版录像与新版规则不兼容"' : ''}><span>↺ ${escape(item.name)}${item.replay.format !== 'orchard-metro.replay.v3' ? ' · 旧版不可回放' : ''}</span><small>${escape(item.replay.createdAt.slice(0, 16).replace('T', ' '))}</small></button>`,
       )
       .join('') || '<p class="muted">暂时没有保存的旅程。</p>';
 }
@@ -854,8 +854,9 @@ $('history-list').onclick = (e) => {
   }
 };
 $<HTMLInputElement>('timeline').oninput = (e) => {
+  const tick = Number((e.target as HTMLInputElement).value);
   controller.setPaused(true);
-  controller.seek(Number((e.target as HTMLInputElement).value));
+  controller.seek(tick);
 };
 function seekBy(ticks: number): void {
   try {

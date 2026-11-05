@@ -68,7 +68,7 @@ describe('opt-in city map generator (project proposal, not original-game calibra
     for (const city of cities) {
       const a = new Session({ seed: 42, city });
       const b = new Session({ seed: 42, city });
-      expect(a.getState().version).toBe('orchard-metro.rules.2');
+      expect(a.getState().version).toBe('orchard-metro.rules.3');
       expect(hash(a.getState())).toBe(hash(b.getState()));
       a.step(1000);
       b.step(1000);

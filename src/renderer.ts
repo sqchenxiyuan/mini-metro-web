@@ -194,13 +194,7 @@ function disposeBadge(badge: THREE.Sprite): void {
   (badge.material as THREE.SpriteMaterial).map?.dispose();
   badge.material.dispose();
 }
-type LoadSnapshot = {
-  tick: number;
-  seed: number;
-  score: number;
-  trains: Map<number, { from: number; to: number | null; line: number; passengers: Map<number, Shape> }>;
-  queues: Map<number, Set<number>>;
-};
+type LoadSnapshot = { tick: number; seed: number };
 type Transfer = { sprite: THREE.Sprite; start: THREE.Vector3; end: THREE.Vector3; tick: number };
 function transferMarker(shape: Shape): THREE.Sprite {
   const canvas = document.createElement('canvas');
@@ -560,96 +554,45 @@ export class MetroRenderer {
     this.activeTransfers = [];
     this.transfers.clear();
   }
-  private updateTransfers(s: State, events?: readonly ServiceEvent[]): void {
+  private updateTransfers(s: State, _events?: readonly ServiceEvent[]): void {
     const previous = this.loadSnapshot;
-    const current: LoadSnapshot = {
-      tick: s.tick,
-      seed: s.seed,
-      score: s.score,
-      trains: new Map(s.trains.map((t) => [t.id, {
-        from: t.from, to: t.to, line: t.line,
-        passengers: new Map(t.passengers.map((p) => [p.id, p.shape])),
-      }])),
-      queues: new Map(s.stations.map((p) => [p.id, new Set(p.queue.map((q) => q.id))])),
-    };
+    const current: LoadSnapshot = { tick: s.tick, seed: s.seed };
     const delta = previous ? s.tick - previous.tick : 0;
     if (!previous || previous.seed !== s.seed || delta < 0 || delta > 8) this.clearTransfers();
-    if (previous && previous.seed === s.seed && delta > 0 && delta <= 8 && events === undefined) {
-      let delivered = Math.max(0, s.score - previous.score);
-      for (const t of s.trains) {
-        const old = previous.trains.get(t.id);
-        if (!old || old.line !== t.line ||
-            (old.to !== null ? old.to !== t.from : old.from !== t.from)) continue;
-        const p = s.stations.find((p) => p.id === t.from);
-        if (!p) continue;
-        const start = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
-        const door = new THREE.Vector3(p.x, 1.14, p.y);
-        // Passenger IDs must move between the actual queue and this train.
-        for (const passenger of t.passengers) {
-          if (!old.passengers.has(passenger.id) &&
-              previous.queues.get(t.from)?.has(passenger.id) &&
-              !current.queues.get(t.from)?.has(passenger.id))
-            this.addTransfer(passenger.id, passenger.shape, 'board', start, door, s.tick);
+    const active = new Set<number>();
+    for (const t of s.trains) {
+      if (!t.transfer) continue;
+      const moving = t.transfer, passenger = moving.passenger;
+      active.add(t.id);
+      const p = s.stations.find((item) => item.id === moving.stationId);
+      if (!p) continue;
+      const waiting = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
+      const door = new THREE.Vector3(p.x, 1.14, p.y);
+      let transfer = this.activeTransfers.find((item) => item.sprite.userData.trainId === t.id);
+      if (!transfer || transfer.sprite.userData.passengerId !== passenger.id) {
+        if (transfer) {
+          this.transfers.remove(transfer.sprite);
+          disposeBadge(transfer.sprite);
+          this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
         }
-        const removed = [...old.passengers].filter(([id]) =>
-          !current.trains.get(t.id)!.passengers.has(id));
-        // A transferred ID is in the station queue; a delivered ID matches
-        // the station shape and consumes one of the observed score increments.
-        for (const [id, shape] of removed) {
-          if (current.queues.get(t.from)?.has(id))
-            this.addTransfer(id, shape, 'alight', door, start, s.tick);
-          else if (shape === p.shape && delivered > 0) {
-            this.addTransfer(id, shape, 'alight', door, start, s.tick);
-            delivered--;
-          }
-        }
+        const sprite = transferMarker(passenger.shape);
+        sprite.userData = { passengerId: passenger.id, trainId: t.id, direction: moving.direction };
+        this.transfers.add(sprite);
+        transfer = { sprite, start: moving.direction === 'board' ? waiting : door,
+          end: moving.direction === 'board' ? door : waiting, tick: s.tick };
+        this.activeTransfers.push(transfer);
       }
+      const phase = Math.max(0, Math.min(1, moving.progress / moving.duration));
+      const eased = phase * phase * (3 - 2 * phase);
+      transfer.sprite.position.copy(transfer.start).lerp(transfer.end, eased);
+      transfer.sprite.position.y += Math.sin(Math.PI * phase) * 0.14;
     }
-    if (events?.length && previous && previous.seed === s.seed && delta > 0) {
-      // The simulation log, not adjacent-render diffs, is authoritative across missed frames.
-      const valid = events.filter((event) => event.tick > previous.tick && event.tick <= s.tick)
-        .sort((a, b) => a.tick - b.tick || a.sequence - b.sequence);
-      for (const event of valid) {
-        if (event.type !== 'board' && event.type !== 'deliver' && event.type !== 'transferOut') continue;
-        if (event.passengerId === null || event.shape === null) continue;
-        const p = s.stations.find((item) => item.id === event.stationId);
-        if (!p) continue;
-        const waiting = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
-        const trainAnchor = this.previousTrainAnchors.get(event.trainId);
-        const door = trainAnchor && trainAnchor.distanceTo(new THREE.Vector3(p.x, 0.48, p.y)) < 2.2
-          ? new THREE.Vector3(trainAnchor.x, 1.14, trainAnchor.z)
-          : new THREE.Vector3(p.x, 1.14, p.y);
-        const boarding = event.type === 'board';
-        this.addTransfer(event.passengerId, event.shape, boarding ? 'board' : 'alight',
-          boarding ? waiting : door, boarding ? door : waiting, event.tick);
-      }
-    }
-    // No simulated passengers are added; these are visual echoes of observed ID changes.
-    for (const transfer of [...this.activeTransfers]) {
-      const progress = (s.tick - transfer.tick) / 5;
-      if (progress >= 1) {
-        this.transfers.remove(transfer.sprite);
-        disposeBadge(transfer.sprite);
-        this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
-      } else {
-        const t = Math.max(0, progress);
-        const eased = t * t * (3 - 2 * t);
-        transfer.sprite.position.copy(transfer.start).lerp(transfer.end, eased);
-        transfer.sprite.position.y += Math.sin(Math.PI * t) * 0.14;
-        const size = 0.58 + 0.12 * Math.sin(Math.PI * t);
-        transfer.sprite.scale.set(size, size, 1);
-      }
+    for (const transfer of [...this.activeTransfers]) if (!active.has(transfer.sprite.userData.trainId)) {
+      this.transfers.remove(transfer.sprite);
+      disposeBadge(transfer.sprite);
+      this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
     }
     this.loadSnapshot = current;
-  }
-  private addTransfer(
-    passengerId: number, shape: Shape, direction: 'board' | 'alight',
-    start: THREE.Vector3, end: THREE.Vector3, tick: number,
-  ): void {
-    const sprite = transferMarker(shape);
-    sprite.userData = { passengerId, direction, tick };
-    this.transfers.add(sprite);
-    this.activeTransfers.push({ sprite, start, end, tick });
   }
   render(s: State, selectedLine = 0, events?: readonly ServiceEvent[]): void {
     this.updateTransfers(s, events);

@@ -112,13 +112,15 @@ export interface Train {
   dwell: number;
   /** -1 while finishing the fixed departure padding. */
   serviceTicks?: number;
+  /** Authoritative passenger currently moving between this train and its station. */
+  transfer?: { passenger: Passenger; direction: 'board' | 'alight'; stationId: number; duration: number; progress: number } | null;
   passengers: Passenger[];
   carriages: number;
   retiring: boolean;
   moveTo: { line: number; station: number } | null;
 }
 export interface State {
-  version: 'orchard-metro.rules.2';
+  version: 'orchard-metro.rules.3';
   seed: number;
   rng: number;
   tick: number;
@@ -185,7 +187,7 @@ export interface Checkpoint {
   hash: string;
 }
 export interface Replay {
-  format: 'orchard-metro.replay.v2';
+  format: 'orchard-metro.replay.v3';
   createdAt: string;
   options: Required<Options>;
   duration: number;

@@ -29,10 +29,12 @@ describe('session transient service events', () => {
     });
     // Drain while the staged service is in progress, rather than discarding
     // earlier ticks outside the visual history window.
-    session.step(7);
+    session.step(8);
     const first = session.drainServiceEvents();
-    session.step(9);
-    const events = [...first, ...session.drainServiceEvents()];
+    session.step(8);
+    const second = session.drainServiceEvents();
+    session.step(8);
+    const events = [...first, ...second, ...session.drainServiceEvents()];
     expect(events.filter((event) => event.type === 'deliver')).toHaveLength(144);
     expect(session.drainServiceEvents()).toEqual([]);
   });

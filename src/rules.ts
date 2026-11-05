@@ -205,7 +205,7 @@ export function createState(options: Options = {}): State {
   )
     throw new Error('非法开局参数');
   const s: State = {
-    version: 'orchard-metro.rules.2',
+    version: 'orchard-metro.rules.3',
     seed,
     rng: seed || 1,
     tick: 0,
@@ -311,6 +311,7 @@ function newTrain(s: State, line: Line, at = line.stops[0], direction: 1 | -1 = 
     direction,
     dwell: 1,
     serviceTicks: 0,
+    transfer: null,
     passengers: [],
     carriages: 0,
     retiring: false,
@@ -333,6 +334,24 @@ function nextStop(
 }
 function unload(s: State, t: Train, emit?: (type: 'deliver' | 'transferOut', t: Train, passenger: Passenger) => void): void {
   const p = station(s, t.from);
+  if (t.transfer) {
+    // A train being withdrawn cannot take an in-flight rider out of the world.
+    // Complete boarding into this train before unloading everyone at the stop.
+    if (t.transfer.direction === 'board') t.passengers.push(t.transfer.passenger);
+    else {
+      const passenger = t.transfer.passenger;
+      if (passenger.shape === p.shape) {
+        s.score++;
+        s.totalWait += s.elapsed - passenger.born;
+        emit?.('deliver', t, passenger);
+      } else {
+        passenger.transfers++;
+        p.queue.push(passenger);
+        emit?.('transferOut', t, passenger);
+      }
+    }
+    t.transfer = null;
+  }
   for (const passenger of t.passengers) {
     if (passenger.shape === p.shape) {
       s.score++;
@@ -449,7 +468,7 @@ export function applyAction(s: State, raw: Action): ActionResult {
       s.resources.carriages--;
       return ok('加挂车厢，增加 6 个座位');
     }
-    if (t.carriages <= 0 || t.passengers.length > t.carriages * RULES.capacity)
+    if (t.carriages <= 0 || t.passengers.length + Number(t.transfer?.direction === 'board') > t.carriages * RULES.capacity)
       return no('无车厢，或乘客过多，暂时无法拆卸');
     t.carriages--;
     s.resources.carriages++;
@@ -518,7 +537,7 @@ export function findRoute(
   }
   return null;
 }
-function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?: (type: 'deliver' | 'transferOut' | 'board', t: Train, passenger: Passenger) => void): number {
+function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): number {
   const p = station(s, t.from);
   // At a loop stop, boarding is evaluated for this train's direction, not
   // the shorter reverse trip offered by a different train on the same line.
@@ -533,17 +552,15 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?
     const passenger = t.passengers[i];
     if (passenger.shape === p.shape) {
       t.passengers.splice(i, 1);
-      s.score++;
-      s.totalWait += s.elapsed - passenger.born;
-      emit?.('deliver', t, passenger);
+      t.transfer = { passenger, direction: 'alight', stationId: p.id,
+        duration: p.interchange ? 1 : 2, progress: 0 };
       return 1;
     }
     const r = route(passenger.shape, t.line);
     if (r && r.line === t.line && r.next === next) continue;
     t.passengers.splice(i, 1);
-    passenger.transfers++;
-    p.queue.push(passenger);
-    emit?.('transferOut', t, passenger);
+    t.transfer = { passenger, direction: 'alight', stationId: p.id,
+      duration: p.interchange ? 1 : 2, progress: 0 };
     return 1;
   }
   if (t.passengers.length >= RULES.capacity * (1 + t.carriages)) return 0;
@@ -552,8 +569,8 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>, emit?
     const r = route(passenger.shape, -1);
     if (!r || r.line !== t.line || r.next !== next) continue;
     p.queue.splice(i, 1);
-    t.passengers.push(passenger);
-    emit?.('board', t, passenger);
+    t.transfer = { passenger, direction: 'board', stationId: p.id,
+      duration: p.interchange ? 1 : 2, progress: 0 };
     return 1;
   }
   return 0;
@@ -618,6 +635,44 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
   let g: Map<number, Edge[]> | null = null;
   const retired: number[] = [];
   for (const t of s.trains) {
+    if (t.transfer) {
+      const moving = t.transfer;
+      moving.progress++;
+      if (moving.progress <= moving.duration) continue;
+      const target = station(s, moving.stationId);
+      if (moving.direction === 'board') {
+        t.passengers.push(moving.passenger);
+        emit?.('board', t, moving.passenger);
+      } else if (moving.passenger.shape === target.shape) {
+        s.score++;
+        s.totalWait += s.elapsed - moving.passenger.born;
+        emit?.('deliver', t, moving.passenger);
+      } else {
+        moving.passenger.transfers++;
+        target.queue.push(moving.passenger);
+        emit?.('transferOut', t, moving.passenger);
+      }
+      t.transfer = null;
+      t.dwell = 0;
+      if (t.retiring) {
+        unload(s, t, emit);
+        s.resources.locomotives++;
+        s.resources.carriages += t.carriages;
+        retired.push(t.id);
+      } else if (t.moveTo) {
+        unload(s, t, emit);
+        const target = t.moveTo;
+        t.moveTo = null;
+        const dest = s.lines.find((line) => line.id === target.line);
+        if (dest?.stops.includes(target.station)) {
+          t.line = target.line;
+          t.from = target.station;
+          t.direction = 1;
+        } else t.retiring = true;
+      }
+      // Keep the next rider's transfer on a later tick.
+      continue;
+    }
     if (t.to !== null) {
       const d = Math.max(0.1, trackLength(station(s, t.from), station(s, t.to)));
       t.progress = Math.min(1, t.progress + RULES.speed / RULES.hz / d);
@@ -676,7 +731,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
       continue;
     }
     g ??= graph(s);
-    if (service(s, t, next.id, g, emit)) {
+    if (service(s, t, next.id, g)) {
       t.dwell = station(s, t.from).interchange ? 1 : 2;
     } else {
       t.serviceTicks = -1;

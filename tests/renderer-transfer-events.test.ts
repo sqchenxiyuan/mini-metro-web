@@ -58,20 +58,38 @@ function passenger(id: number, shape: 'circle' | 'triangle' | 'square') {
 }
 
 describe('transfer visual feedback for dense stations', () => {
-  it('preserves per-rider event ticks in a skipped browser frame', () => {
+  it('shows a completed in-transit endpoint before the passenger enters the carriage', () => {
     const { renderer, state, train } = scene();
+    const id = 902;
+    train.transfer = { passenger: passenger(id, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 1, progress: 0 };
     renderer.render(state);
-    const p = state.stations[0];
-    const events = [
-      { type: 'board' as const, tick: 1, sequence: 0, stationId: p.id,
-        trainId: train.id, lineId: train.line, passengerId: 301, shape: 'triangle' as const },
-      { type: 'board' as const, tick: 3, sequence: 0, stationId: p.id,
-        trainId: train.id, lineId: train.line, passengerId: 302, shape: 'square' as const },
-    ];
-    state.tick = 3;
-    renderer.render(state, 0, events);
-    expect(markers(renderer).map((sprite) => sprite.userData.tick)).toEqual([1, 3]);
-    expect(markers(renderer)[0].position.distanceTo(markers(renderer)[1].position)).toBeGreaterThan(0.05);
+    const start = markers(renderer)[0].position.clone();
+    state.tick++;
+    train.transfer.progress = 1;
+    renderer.render(state);
+    const end = markers(renderer)[0].position.clone();
+    expect(end.distanceTo(start)).toBeGreaterThan(0.1);
+    expect(train.passengers).toHaveLength(0);
+    state.tick++;
+    train.transfer = null;
+    train.passengers.push(passenger(id, 'triangle'));
+    renderer.render(state);
+    expect(markers(renderer)).toHaveLength(0);
+    renderer.dispose();
+  });
+  it('draws a transfer directly from authoritative progress on the first frame or after seek', () => {
+    const { renderer, state, train } = scene();
+    train.transfer = { passenger: passenger(901, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 1 };
+    renderer.render(state, 0, []);
+    expect(markers(renderer)).toHaveLength(1);
+    expect(markers(renderer)[0].userData).toMatchObject({ passengerId: 901, trainId: 900, direction: 'board' });
+    const pos = markers(renderer)[0].position.clone();
+    state.tick += 20;
+    renderer.render(state, 0, []);
+    expect(markers(renderer)).toHaveLength(1);
+    expect(markers(renderer)[0].position.distanceTo(pos)).toBe(0);
     renderer.dispose();
   });
   it('does not replay an old event with the same train ID after a restart at an equal tick', () => {
@@ -80,9 +98,12 @@ describe('transfer visual feedback for dense stations', () => {
     const oldEvent = { type: 'board' as const, tick: 1, sequence: 0,
       stationId: state.stations[0].id, trainId: train.id, lineId: 0, passengerId: 77, shape: 'triangle' as const };
     state.tick = 2;
+    train.transfer = { passenger: passenger(77, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 1 };
     renderer.render(state, 0, [oldEvent]);
     expect(markers(renderer)).toHaveLength(1);
-    state.tick = 0; // new run with the same seed and train ID; consumer has no persisted event log
+    state.tick = 0;
+    train.transfer = null;
     renderer.render(state, 0, []);
     expect(markers(renderer)).toHaveLength(0);
     renderer.dispose();
@@ -111,12 +132,12 @@ describe('transfer visual feedback for dense stations', () => {
     state.tick = 12;
     state.score++;
     train.passengers = [passenger(1002, 'triangle')];
+    train.transfer = { passenger: passenger(1001, station.shape as 'circle'),
+      direction: 'alight', stationId: station.id, duration: 2, progress: 1 };
     renderer.render(state, 0, events);
-    expect(markers(renderer).map((m) => [m.userData.passengerId, m.userData.direction])).toEqual([
-      [1001, 'alight'], [1002, 'board'],
-    ]);
+    expect(markers(renderer).map((m) => [m.userData.passengerId, m.userData.direction])).toEqual([[1001, 'alight']]);
     renderer.render(state, 0, events);
-    expect(markers(renderer)).toHaveLength(2);
+    expect(markers(renderer)).toHaveLength(1);
     renderer.dispose();
   });
   it('keeps multiple alighting passengers tied to their actual train and station without inventing an event on a pause', () => {
@@ -125,12 +146,14 @@ describe('transfer visual feedback for dense stations', () => {
     train.passengers.push(passenger(1001, station.shape as 'circle'), passenger(1002, station.shape as 'circle'));
     renderer.render(state);
     state.tick++;
-    state.score += 2;
-    train.passengers = [];
+    state.score += 1;
+    train.passengers = [passenger(1002, station.shape as 'circle')];
+    train.transfer = { passenger: passenger(1001, station.shape as 'circle'),
+      direction: 'alight', stationId: station.id, duration: 2, progress: 0 };
     renderer.render(state);
-    expect(markers(renderer).map((m) => m.userData.passengerId).sort()).toEqual([1001, 1002]);
+    expect(markers(renderer).map((m) => m.userData.passengerId)).toEqual([1001]);
     renderer.render(state);
-    expect(markers(renderer)).toHaveLength(2);
+    expect(markers(renderer)).toHaveLength(1);
     renderer.dispose();
   });
 });

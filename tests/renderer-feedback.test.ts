@@ -58,7 +58,20 @@ function transfers(renderer: MetroRenderer) {
 afterEach(() => { canvases.length = 0; });
 
 describe('train load feedback', () => {
-  it('animates a verified boarding transition after several ticks between renders', () => {
+  it('renders a current in-progress transfer after skipped browser frames', () => {
+    const { renderer, state } = setup();
+    state.trains[0].dwell = 0;
+    state.stations[0].queue = [passenger(301, 'triangle')];
+    for (const p of state.stations) p.nextPassenger = Infinity;
+    renderer.render(state);
+    advance(state);
+    advance(state);
+    renderer.render(state);
+    expect(state.trains[0].transfer).toMatchObject({ passenger: { id: 301 }, progress: 1 });
+    expect(transfers(renderer).some((sprite) => sprite.userData.passengerId === 301 && sprite.userData.direction === 'board')).toBe(true);
+    renderer.dispose();
+  });
+  it('drops a finished transfer when several ticks pass before the next render', () => {
     const { renderer, state } = setup();
     state.trains[0].dwell = 0;
     state.stations[0].queue = [passenger(301, 'triangle')];
@@ -67,7 +80,7 @@ describe('train load feedback', () => {
     for (let i = 0; i < 6; i++) advance(state);
     renderer.render(state);
     expect(state.trains[0].passengers.map((p) => p.id)).toContain(301);
-    expect(transfers(renderer).some((sprite) => sprite.userData.passengerId === 301 && sprite.userData.direction === 'board')).toBe(true);
+    expect(transfers(renderer)).toHaveLength(0);
     renderer.dispose();
   });
   it('draws each destination as one roof shape, without numbers or multipliers', () => {
@@ -89,22 +102,30 @@ describe('train load feedback', () => {
     renderer.render(state);
     advance(state);
     renderer.render(state);
-    expect(state.trains[0].passengers.map((p) => p.id)).toEqual([101]);
+    expect(state.trains[0].transfer).toMatchObject({ direction: 'board', passenger: { id: 101 } });
     expect(transfers(renderer)).toHaveLength(1);
     expect(transfers(renderer)[0].userData).toMatchObject({ passengerId: 101, direction: 'board' });
-    const start = transfers(renderer)[0].position.x;
+    advance(state);
+    advance(state);
     advance(state);
     renderer.render(state);
-    expect(transfers(renderer)[0].position.x).toBeGreaterThan(start);
-    // Arrive and service at a destination; no marker unless an actual ID leaves the train.
+    expect(state.trains[0].passengers.map((p) => p.id)).toEqual([101]);
+    expect(transfers(renderer)).toHaveLength(0);
+    // At the destination the authoritative alighting state starts first; score changes on completion.
     state.trains[0].to = state.stations[1].id;
     state.trains[0].progress = 0.999;
     renderer.render(state);
     advance(state);
     renderer.render(state);
+    expect(state.score).toBe(0);
+    expect(state.trains[0].transfer).toMatchObject({ direction: 'alight', passenger: { id: 101 } });
+    expect(transfers(renderer)).toHaveLength(1);
+    advance(state);
+    advance(state);
+    advance(state);
+    renderer.render(state);
     expect(state.score).toBe(1);
-    expect(transfers(renderer).filter((sprite) => sprite.userData.direction === 'alight')).toHaveLength(1);
-    expect(transfers(renderer).at(-1)!.userData).toMatchObject({ passengerId: 101, direction: 'alight' });
+    expect(transfers(renderer)).toHaveLength(0);
     renderer.dispose();
   });
   it('does not invent transfers on the first snapshot, pause, seek, reset or passenger edits', () => {
@@ -118,12 +139,14 @@ describe('train load feedback', () => {
     renderer.render(state);
     state.tick++;
     state.stations[0].queue = [];
-    state.trains[0].passengers.push(passenger(502, 'triangle'));
+    state.trains[0].transfer = { passenger: passenger(502, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 0 };
     renderer.render(state);
     expect(transfers(renderer)).toHaveLength(1);
     renderer.render(state); // same tick: paused or UI redraw
     expect(transfers(renderer)).toHaveLength(1);
     state.tick += 15; // replay seek
+    state.trains[0].transfer = null;
     renderer.render(state);
     expect(transfers(renderer)).toHaveLength(0);
     state.tick = 0; // reset/new game or seek backward
@@ -137,12 +160,16 @@ describe('train load feedback', () => {
     renderer.render(state);
     state.tick++;
     state.stations[0].queue = [];
-    state.trains[0].passengers = [passenger(505, 'triangle')];
+    state.trains[0].transfer = { passenger: passenger(505, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 0 };
     renderer.render(state);
     const marker = transfers(renderer)[0] as THREE.Sprite;
     const texture = (marker.material as THREE.SpriteMaterial).map!;
     const disposed = vi.spyOn(texture, 'dispose');
-    for (let i = 0; i < 5; i++) { state.tick++; renderer.render(state); }
+    state.tick++;
+    state.trains[0].transfer = null;
+    state.trains[0].passengers = [passenger(505, 'triangle')];
+    renderer.render(state);
     expect(transfers(renderer)).toHaveLength(0);
     expect(disposed).toHaveBeenCalledOnce();
     state.tick++;
@@ -166,11 +193,12 @@ describe('train load feedback', () => {
     const { renderer, state } = setup();
     const first = state.trains[0];
     first.passengers = [passenger(601, 'circle')];
-    state.trains.push({ ...first, id: 102, passengers: [passenger(602, 'circle')] });
+    state.trains.push({ ...first, id: 102, passengers: [passenger(602, 'circle')], transfer: null });
     renderer.render(state);
     state.tick++;
-    state.score++;
     first.passengers = [];
+    first.transfer = { passenger: passenger(601, 'circle'), direction: 'alight',
+      stationId: state.stations[0].id, duration: 2, progress: 0 };
     state.trains[1].passengers = [];
     renderer.render(state);
     expect(transfers(renderer).filter((sprite) => sprite.userData.direction === 'alight')).toHaveLength(1);
