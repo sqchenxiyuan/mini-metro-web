@@ -155,6 +155,59 @@ describe('automatic camera framing', () => {
   });
 });
 
+describe('render cache and replay state boundaries', () => {
+  it('rebuilds a rail when station coordinates change without changing route IDs', () => {
+    const { renderer, state } = setup();
+    state.lines[0].stops = [1, 2];
+    renderer.render(state);
+    const rail = tracks(renderer).find((m) => (m.material as THREE.MeshStandardMaterial).color.getHexString() === new THREE.Color(LINE_COLORS[0]).getHexString())!;
+    rail.geometry.computeBoundingBox();
+    const oldY = rail.geometry.boundingBox!.max.z;
+    state.stations[1].y = 2;
+    renderer.render(state);
+    const movedRail = tracks(renderer).find((m) => (m.material as THREE.MeshStandardMaterial).color.getHexString() === new THREE.Color(LINE_COLORS[0]).getHexString())!;
+    movedRail.geometry.computeBoundingBox();
+    const newY = movedRail.geometry.boundingBox!.max.z;
+    expect(movedRail).not.toBe(rail);
+    expect(newY).not.toBeCloseTo(oldY);
+    renderer.dispose();
+  });
+  it('preserves a manually adjusted camera on backward seek', () => {
+    const { renderer, state } = setup();
+    renderer.render(state);
+    renderer.setZoom(1.3);
+    renderer.pan(30, 12);
+    const before = { frame: { ...(renderer as unknown as { frameSize: { width: number; height: number } }).frameSize },
+      center: { ...(renderer as unknown as { center: { x: number; y: number } }).center } };
+    state.tick = 1200;
+    renderer.render(state);
+    state.tick = 0;
+    renderer.render(state);
+    expect(renderer.getZoom()).toBe(1.3);
+    expect((renderer as unknown as { frameSize: { width: number; height: number } }).frameSize).toEqual(before.frame);
+    expect((renderer as unknown as { center: { x: number; y: number } }).center).toEqual(before.center);
+    renderer.dispose();
+  });
+  it('restores automatic opening framing on a backward replay seek', () => {
+    const { renderer, state } = setup();
+    state.nextStation = 1680;
+    renderer.render(state);
+    const opening = { ...(renderer as unknown as { frameSize: { width: number; height: number } }).frameSize };
+    state.tick = 1200;
+    state.elapsed = state.nextStation - 1;
+    renderer.render(state);
+    const expanded = (renderer as unknown as { frameSize: { width: number; height: number } }).frameSize;
+    expect(expanded.width).toBeGreaterThan(opening.width);
+    const wideProjection = renderer.project(state.stations[1].x, state.stations[1].y).x;
+    state.tick = 0;
+    state.elapsed = 0;
+    renderer.render(state);
+    expect((renderer as unknown as { frameSize: { width: number; height: number } }).frameSize).toEqual({ width: 19, height: 13 });
+    expect(renderer.project(state.stations[1].x, state.stations[1].y).x).toBeGreaterThan(wideProjection);
+    renderer.dispose();
+  });
+});
+
 describe('shared station visual layout', () => {
   it('draws seven ordered touching colors over one continuous pale backing when seven lines share a segment in either direction', () => {
     const { renderer, state } = setup();

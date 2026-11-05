@@ -58,6 +58,46 @@ function passenger(id: number, shape: 'circle' | 'triangle' | 'square') {
 }
 
 describe('transfer visual feedback for dense stations', () => {
+  it('replaces a same-rider marker if the replay station changes at the same tick', () => {
+    const { renderer, state, train } = scene();
+    state.tick = 7;
+    train.transfer = { passenger: passenger(777, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 1 };
+    renderer.render(state);
+    const before = markers(renderer)[0];
+    train.transfer = { ...train.transfer, stationId: state.stations[1].id };
+    renderer.render(state, 0, []);
+    expect(markers(renderer)).toHaveLength(1);
+    expect(markers(renderer)[0]).not.toBe(before);
+    expect(markers(renderer)[0].userData.stationId).toBe(state.stations[1].id);
+    renderer.dispose();
+  });
+  it('replaces a marker at the same tick when the same rider has a different transfer direction', () => {
+    const { renderer, state, train } = scene();
+    state.tick = 7;
+    train.transfer = { passenger: passenger(777, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 1 };
+    renderer.render(state);
+    const before = markers(renderer)[0];
+    train.transfer = { ...train.transfer, direction: 'alight' };
+    renderer.render(state, 0, []);
+    expect(markers(renderer)).toHaveLength(1);
+    expect(markers(renderer)[0]).not.toBe(before);
+    expect(markers(renderer)[0].userData.direction).toBe('alight');
+    renderer.dispose();
+  });
+  it('clears a live marker when replay replaces the state at the same tick', () => {
+    const { renderer, state, train } = scene();
+    state.tick = 7;
+    train.transfer = { passenger: passenger(777, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 2, progress: 1 };
+    renderer.render(state);
+    expect(markers(renderer)).toHaveLength(1);
+    train.transfer = null;
+    renderer.render(state, 0, []);
+    expect(markers(renderer)).toHaveLength(0);
+    renderer.dispose();
+  });
   it('shows a completed in-transit endpoint before the passenger enters the carriage', () => {
     const { renderer, state, train } = scene();
     const id = 902;

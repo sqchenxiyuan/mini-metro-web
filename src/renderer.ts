@@ -569,14 +569,17 @@ export class MetroRenderer {
       const waiting = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
       const door = new THREE.Vector3(p.x, 1.14, p.y);
       let transfer = this.activeTransfers.find((item) => item.sprite.userData.trainId === t.id);
-      if (!transfer || transfer.sprite.userData.passengerId !== passenger.id) {
+      if (!transfer || transfer.sprite.userData.passengerId !== passenger.id ||
+          transfer.sprite.userData.direction !== moving.direction ||
+          transfer.sprite.userData.stationId !== moving.stationId) {
         if (transfer) {
           this.transfers.remove(transfer.sprite);
           disposeBadge(transfer.sprite);
           this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
         }
         const sprite = transferMarker(passenger.shape);
-        sprite.userData = { passengerId: passenger.id, trainId: t.id, direction: moving.direction };
+        sprite.userData = { passengerId: passenger.id, trainId: t.id,
+          stationId: moving.stationId, direction: moving.direction };
         this.transfers.add(sprite);
         transfer = { sprite, start: moving.direction === 'board' ? waiting : door,
           end: moving.direction === 'board' ? door : waiting, tick: s.tick };
@@ -595,6 +598,7 @@ export class MetroRenderer {
     this.loadSnapshot = current;
   }
   render(s: State, selectedLine = 0, events?: readonly ServiceEvent[]): void {
+    if (this.loadSnapshot && s.tick < this.loadSnapshot.tick && !this.manualCamera) this.resetCamera();
     this.updateTransfers(s, events);
     if (this.city !== s.city) this.buildEnvironment(s.city);
     const frameKey = JSON.stringify(s.stations.map((p) => [p.x, p.y]));
@@ -674,7 +678,8 @@ export class MetroRenderer {
           ([a, b]) => (a === t.from && b === t.to) || (b === t.from && a === t.to),
         ),
     );
-    const key = JSON.stringify([s.lines, ghost.map((t) => [t.line, t.from, t.to]), selectedLine]);
+    const key = JSON.stringify([s.lines, s.stations.map((p) => [p.id, p.x, p.y]),
+      ghost.map((t) => [t.line, t.from, t.to]), selectedLine]);
     if (key !== this.routeKey) {
       this.routeKey = key;
       disposeGroup(this.tracks);
