@@ -18,11 +18,11 @@ npm run demo:agent
 npm run serve:agent  # http://127.0.0.1:8789/decide
 ```
 
-默认只显示地图、线路色点、乘客与底部资源。采用带有清晰目的地形状标识的立体车站和玩具列车，去掉场景装饰与厚底座；镜头随新站扩张自动调整，手动缩放/平移后可点「⌂」恢复自动取景。
+默认只显示地图、线路色点、乘客与底部资源。**普通入口**为 [直接游玩](https://sqchenxiyuan.github.io/mini-metro-web/)；[AI 集成入口](https://sqchenxiyuan.github.io/mini-metro-web/integration.html)将相同游戏置于中央，画面截取、结构化观察、动作 JSON 与 HTTP Agent 设置在游戏外部。完整边界见 [ARCHITECTURE-vNext.md](ARCHITECTURE-vNext.md)。采用带有清晰目的地形状标识的立体车站和玩具列车，去掉场景装饰与厚底座；镜头随新站扩张自动调整，手动缩放/平移后可点「⌂」恢复自动取景。
 
 拖过车站绘制线路，从端点延长；也可以拖动线路中段接入新站。左侧色点选线，「···」展开重画、闭环、加车、车厢与回收工具。点一下车站查看候车详情。空格暂停，1–7 选线，Esc 收起工具。右上角「调度」「回放」按需打开相应面板。
 
-Agent 接口的观察字段、动作、HTTP 示例和内部状态边界见 [AGENT.md](AGENT.md)。在「调度」中可直接查看实际发送的观察 JSON。
+Agent 接口的观察字段、动作、HTTP 示例和内部状态边界见 [AGENT.md](AGENT.md)。普通入口只面向人类游玩；AI 集成页提供完整状态观察、截图和外部动作入口。
 
 本项目实现三张原创地图与经典、无尽、极限、创意四种模式。具体差异见 FIDELITY.md；不能将功能覆盖率当作已实测达到原版 90% 还原。
 
@@ -30,7 +30,7 @@ Agent 接口的观察字段、动作、HTTP 示例和内部状态边界见 [AGEN
 
 界面名称为「小小地铁 / Little Metro」。包名、协议和地图键 `orchard` 沿用原技术标识 `orchard-metro`；规则已升为 `rules.5`、录像为 `replay.v5`；旧录像不可直接导入。
 
-`npm run test:browser` 需先运行 `npm run build` 和本地预览服务；`PLAYWRIGHT_BROWSERS_PATH` 可用于容器中的浏览器缓存。`PLAYWRIGHT_BROWSERS_PATH=… node scripts/ui-verify.mjs` 验收地图优先的桌面/手机 UI、错误提示与同种子重试；`VITE_BASE_PATH=/mini-metro-web/ npm run build` 后运行 `node scripts/pages-verify.mjs` 验证 Pages 子路径下字体及所有静态资源加载。局中中文使用随站点自托管的 Noto Sans SC 字体，许可证见 `public/fonts/OFL.txt` 和 `NOTICE.md`。
+`npm run test:browser` 需先运行 `npm run build` 和本地预览服务；`PLAYWRIGHT_BROWSERS_PATH` 可用于容器中的浏览器缓存。`PLAYWRIGHT_BROWSERS_PATH=… node scripts/ui-verify.mjs` 验收地图优先的桌面/手机 UI、错误提示与同种子重试；`VITE_BASE_PATH=/mini-metro-web/ npm run build` 后运行 `node scripts/pages-verify.mjs` 验证 Pages 子路径下字体及所有静态资源加载。局中中文使用自托管精简版 Noto Sans SC WOFF2（移除原 10 MB TTF），许可证见 `public/fonts/OFL.txt` 和 `NOTICE.md`。场景中的乘客目的地与拥挤提示由 WebGL 绘制，DOM 站点按钮仅作触控和无障碍操作。
 
 **首版地图边界：** `src/map-generation.ts` 提供独立、可验证的城市区域/站型池/日程原型及种子事件记录；它仍是未接入线上游戏的 opt-in `rules.2` 提案，以原有 240 tick/日独立运行，和当前游戏的 `rules.5` 互不兼容。线上游玩仍使用统一扩站器；城市原版参数及特殊站替换规则尚未做原版实机对照。不要把地图原型测试通过写成已上线的城市级生成。
 
@@ -59,7 +59,7 @@ player.observationAtDecision(0); // 同一 tick 多条决策也能精确重建�
 
 `window.metro` 暴露 `observe / getState / submit / step / pause / restart / startAgent / stopAgent / connectHttp / exportReplay / loadReplay / seek / focusDecision / observationAtDecision / capture / projectStation / hash`。`focusDecision(index)` 会暂停并在地图上显示这条决策执行前的现场；按播放继续查看后续过程。
 
-`capture()` 返回当前 WebGL 游戏画面 PNG data URL。结构化状态接口和 `projectStation` 明确属于白盒控制；屏幕 VLM 应只使用截图和实际鼠标键盘输入，并自行声明采用的观察边界。页面中的 DOM 标签包含站点形状、候车和拥挤指示，屏幕 Agent 应使用 Playwright 页面截图以包含标签与界面。
+`capture()` 返回当前 WebGL 游戏画面 PNG data URL（含场景内乘客/拥挤标记，不含外层 DOM 控件）。结构化状态接口和 `projectStation` 明确属于白盒控制；屏幕 VLM 应只使用截图和实际鼠标键盘输入，并自行声明采用的观察边界。截取整个页面请使用浏览器截图；透明 DOM 站点按钮保留用于触摸与屏幕阅读器。
 
 `createBrowserGame` 从 `@snack-lab/orchard-metro/browser` 导出一个独立浏览器控制器，可挂接自己的 UI；它不自动挂载本项目的 Three.js 渲染器。
 

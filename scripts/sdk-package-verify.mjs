@@ -15,9 +15,12 @@ const npmCli =
   process.env.npm_execpath ?? resolve(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
 const npm = (args, cwd = process.cwd()) =>
   execFileSync(process.execPath, [npmCli, ...args], { cwd, encoding: 'utf8', windowsHide: true });
-const packed = JSON.parse(
+const packedResult = JSON.parse(
   npm(['pack', './dist-sdk', '--pack-destination', 'artifacts', '--json']),
-)[0];
+);
+const packed = Array.isArray(packedResult) ? packedResult[0]
+  : packedResult?.filename ? packedResult : Object.values(packedResult ?? {})[0];
+assert.ok(packed?.filename, 'npm pack --json must return a package filename');
 const tarball = resolve('artifacts', packed.filename);
 await writeFile(
   resolve(root, 'package.json'),
@@ -103,7 +106,8 @@ const server = createServer(async (req, res) => {
   }
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await chromium.launch({ headless: true,
+  ...(process.env.METRO_BROWSER_EXECUTABLE_PATH ? { executablePath: process.env.METRO_BROWSER_EXECUTABLE_PATH } : {}) });
 try {
   const page = await browser.newPage(),
     errors = [];

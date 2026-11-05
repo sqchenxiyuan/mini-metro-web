@@ -5,6 +5,42 @@ import { MetroController } from '../src/browser';
 import { createState, hash } from '../src/rules';
 
 describe('controller visual event boundary', () => {
+  it('returns independent atomic render snapshots and consumes transient events once', () => {
+    const controller = new MetroController({ mode: 'creative', seed: 77 });
+    const [a, b] = controller.getState().stations;
+    controller.submit({ action: { type: 'route', line: 0, stops: [a.id, b.id] } });
+    controller.submit({ action: { type: 'addTrain', line: 0, station: a.id } });
+    controller.step(24);
+    const snapshot = controller.getRenderSnapshot();
+    expect(snapshot.state.tick).toBe(24);
+    expect(snapshot.events.some((event) => event.type === 'depart')).toBe(true);
+    expect(snapshot.motion.previous).toBeNull();
+    snapshot.state.stations[0].queue.push({ id: -1, shape: 'circle', born: 0, transfers: 0 });
+    snapshot.events.splice(0);
+    expect(controller.getState().stations[0].queue.some((p) => p.id === -1)).toBe(false);
+    expect(controller.getRenderSnapshot().events).toEqual([]);
+    controller.dispose();
+  });
+  it('keeps replay frames free of live events and never feeds presentation mutations back to logic', () => {
+    let frame: ((now: number) => void) | undefined;
+    vi.stubGlobal('requestAnimationFrame', (cb: (now: number) => void) => { frame = cb; return 1; });
+    const controller = new MetroController({ mode: 'creative', seed: 420 });
+    controller.submit({ action: { type: 'route', line: 0, stops: [1, 2, 3] } });
+    controller.step(25);
+    controller.setPaused(false);
+    frame!(1000);
+    frame!(1020);
+    const snapshot = controller.getRenderSnapshot();
+    expect(snapshot.motion.previous?.tick).toBe(snapshot.state.tick - 1);
+    const authoritative = hash(controller.getState());
+    snapshot.motion.previous!.score = -100;
+    snapshot.state.score = -100;
+    expect(hash(controller.getState())).toBe(authoritative);
+    controller.loadReplay(controller.exportReplay());
+    expect(controller.getRenderSnapshot().events).toEqual([]);
+    expect(controller.getRenderSnapshot().motion.previous).toBeNull();
+    controller.dispose();
+  });
   it('advances one 50 Hz logic tick per 20 ms at 1× and scales elapsed time at 2×', () => {
     let frame: ((now: number) => void) | undefined;
     vi.stubGlobal('requestAnimationFrame', (cb: (now: number) => void) => { frame = cb; return 1; });

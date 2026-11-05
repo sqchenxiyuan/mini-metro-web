@@ -151,13 +151,17 @@ try {
   assert.equal(snapshots[0], snapshots[1]);
   await page.evaluate((tick) => window.metro.seek(tick), 245 * RULES.hz);
   await page.click('#tab-dispatch');
-  await page.click('#agent-observation');
-  const wire = JSON.parse(await page.locator('#observation-json').textContent());
-  assert.equal(wire.protocol, 'orchard-metro.agent.v1');
-  assert.equal(hash(wire.state), await page.evaluate(() => window.metro.hash()));
-  assert.equal(typeof wire.state.rng, 'number');
-  assert.equal(typeof wire.state.stations[0].nextPassenger, 'number');
-  await page.click('#observation-close');
+  if (await page.locator('#agent-observation').count()) {
+    await page.click('#agent-observation');
+    const wire = JSON.parse(await page.locator('#observation-json').textContent());
+    assert.equal(wire.protocol, 'orchard-metro.agent.v1');
+    assert.equal(hash(wire.state), await page.evaluate(() => window.metro.hash()));
+    assert.equal(typeof wire.state.rng, 'number');
+    assert.equal(typeof wire.state.stations[0].nextPassenger, 'number');
+    await page.click('#observation-close');
+  } else {
+    assert.equal(await page.locator('.agent-controls').count(), 0, 'normal game is human-only');
+  }
   await page.screenshot({ path: `${output}/inspector.png`, fullPage: true });
   await page.click('#inspector-close');
   await page.waitForTimeout(200);
@@ -231,10 +235,9 @@ try {
   await page.click('#settings-form button[type="submit"]');
   assert.equal(await page.evaluate(() => window.metro.getState().mode), 'creative');
   assert.equal(await page.locator('#inspector').isVisible(), false);
-  await page.click('#sample-route');
-  await page.evaluate(() => window.metro.pause());
   const inserted = await page.evaluate(() => {
     const g = window.metro;
+    g.submit({ action: { type: 'route', line: 0, stops: [1, 2] } }, 'test-fixture');
     g.submit({ action: { type: 'station', x: -5, y: 4, shape: 'star' } }, 'test-fixture');
     return g.getState().stations.at(-1).id;
   });
@@ -279,7 +282,8 @@ try {
   await mobile.waitForTimeout(180);
   await mobile.screenshot({ path: `${output}/mobile.png`, fullPage: true });
   await mobile.click('#tools-toggle');
-  assert.equal(await mobile.locator('#agent-toggle').isVisible(), true);
+  assert.equal(await mobile.locator('#station-detail').count(), 1);
+  assert.equal(await mobile.locator('#agent-toggle').count(), 0);
   await mobile.click('#inspector-close');
   assert.equal(await mobile.locator('#inspector').isVisible(), false);
   await mobile.click('#line-tools-toggle');
@@ -307,7 +311,7 @@ try {
       'touch drawing',
       'mobile layout',
       'collapsed tools and full-width map',
-      'live Agent observation JSON',
+      'human-only normal game',
       'mobile panel controls',
     ],
     nodeToBrowser: {

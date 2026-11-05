@@ -74,3 +74,68 @@ export function layoutOverlays(stations: readonly OverlayStation[], viewport: { 
   }
   return stations.map((p) => result.get(p.id)!);
 }
+
+/** Local CSS-pixel bounds of the actual WebGL geometries, including text planes. */
+export const warningCueBounds: OverlayBox = { x: 7, y: -40.5, width: 24, height: 28.5 };
+export function queueCueBounds(count: number, level: NonNullable<OverlayBox['level']>): OverlayBox {
+  const icons = level === 'full' ? Math.min(count, 3) : level === 'compact' ? Math.min(count, 1) : 0;
+  const text = level === 'count' ? String(count) : count > icons ? `+${count - icons}` : '';
+  const textWidth = text ? Math.min(36, Math.max(16, text.length * 8)) : 0;
+  const occupied = icons * 11 + (text ? Math.min(27, text.length * 8) : 0);
+  const iconLeft = icons ? -occupied / 2 + 0.5 : Infinity;
+  const iconRight = icons ? -occupied / 2 + (icons - 1) * 11 + 10.5 : -Infinity;
+  const textLeft = text ? occupied / 2 - textWidth : Infinity;
+  const textRight = text ? occupied / 2 : -Infinity;
+  const x = Math.min(iconLeft, textLeft);
+  return { x, y: text ? -8.5 : -5, width: Math.max(iconRight, textRight) - x,
+    height: text ? 17 : 10 };
+}
+
+/** In-scene cue layout. Returned rectangles are the *drawn* geometry bounds,
+ * not hypothetical cards; the warning ring remains at its station independently.
+ */
+export function layoutSceneCues(stations: readonly OverlayStation[],
+  viewport: { width: number; height: number }, reserved: readonly OverlayBox[] = []): OverlayPlacement[] {
+  const mobile = viewport.width <= 650;
+  const hitSize = mobile ? 44 : 36;
+  const hits = stations.map((p) => ({ id: p.id, box: {
+    x: p.x - hitSize / 2, y: p.y - 5, width: hitSize, height: hitSize,
+  } }));
+  const blocked: OverlayBox[] = [...reserved];
+  const result = new Map(stations.map((p) => [p.id, {
+    id: p.id, queue: null, warning: null, warningFallback: false, queueFallback: false,
+  } as OverlayPlacement]));
+  // All candidate centers are <=36px from their anchor. Local annotation may
+  // overlap its *own* transparent target but never another station's target.
+  const warningCenters = [[0, -30], [-22, -27], [22, -27], [0, 32]];
+  const queueCenters = [[0, -30], [-22, -27], [22, -27], [0, 32]];
+  const place = (p: OverlayStation, shape: OverlayBox, centers: number[][],
+    level?: OverlayBox['level']): OverlayBox | null => {
+    for (const [dx, dy] of centers) {
+      const box = { x: p.x + dx - shape.width / 2, y: p.y + dy - shape.height / 2,
+        width: shape.width, height: shape.height, ...(level ? { level } : {}) };
+      if (box.x < 4 || box.y < 4 || box.x + box.width > viewport.width - 4 ||
+        box.y + box.height > viewport.height - 4 || blocked.some((other) => intersects(box, other)) ||
+        hits.some((hit) => hit.id !== p.id && intersects(box, hit.box))) continue;
+      blocked.push(box);
+      return box;
+    }
+    return null;
+  };
+  const ordered = [...stations].sort((a, b) => Number(b.selected) - Number(a.selected) ||
+    b.crowd - a.crowd || a.id - b.id);
+  for (const p of ordered) if (p.crowd > 0) {
+    const entry = result.get(p.id)!;
+    entry.warning = place(p, warningCueBounds, warningCenters);
+    entry.warningFallback = !entry.warning;
+  }
+  for (const p of ordered) if (p.queue > 0) {
+    const entry = result.get(p.id)!;
+    for (const level of ['full', 'compact', 'count'] as const) {
+      entry.queue = place(p, queueCueBounds(p.queue, level), queueCenters, level);
+      if (entry.queue) break;
+    }
+    entry.queueFallback = !entry.queue;
+  }
+  return stations.map((p) => result.get(p.id)!);
+}

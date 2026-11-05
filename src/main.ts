@@ -3,7 +3,7 @@ import './style.css';
 import './minimal.css';
 import { MetroController } from './browser';
 import { hitTestVisibleLane, MetroRenderer } from './renderer';
-import { layoutOverlays } from './overlay-layout';
+import { layoutSceneCues } from './overlay-layout';
 import { creativeStationPicker } from './station-picker';
 import { MetroAudio } from './audio';
 import { observeState } from './session';
@@ -21,9 +21,9 @@ import {
   trackPosition,
   tunnelsUsed,
 } from './rules';
-import { dispatcherPolicy } from './agent';
 import type { Action, City, Mode, Options, Replay, Shape, State } from './types';
 
+const integrationSurface = document.querySelector('meta[name="metro-surface"][content="integration"]') !== null;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
 <header class="topbar">
@@ -46,11 +46,12 @@ app.innerHTML = `
   </aside>
   <section class="map-panel" aria-label="地铁地图">
     <div class="map-heading"><div><span class="live-dot"></span><span id="map-status">准备出发</span></div><span id="week-label">第 1 周 · 星期一</span></div>
-    <div id="stage"><div id="station-layer"></div><div id="train-layer"></div><div id="overlay-layer"></div></div>
+    <div id="stage"><div id="station-layer"></div><div id="train-layer"></div></div>
     <button id="map-alerts" type="button" aria-label="查看地图拥挤车站" hidden></button>
+    <div id="station-peek" role="status" aria-live="polite" hidden></div>
     <div id="train-detail" class="train-detail" hidden></div>
     <div class="map-tools"><button id="zoom-out" title="缩小">−</button><button id="zoom-reset" title="恢复视野">⌂</button><button id="zoom-in" title="放大">＋</button><button id="screenshot" title="保存地图截图">▧</button></div>
-    <div id="map-hint" class="map-hint"><span>拖过车站，连起第一条线路。</span><button id="sample-route">示范 ↗</button></div>
+    <div id="map-hint" class="map-hint"><span>拖过车站，连起第一条线路。</span></div>
     <div id="toast" role="status"></div>
     <div id="upgrade-panel" class="floating-overlay" hidden></div>
     <div id="game-over" class="floating-overlay" hidden></div>
@@ -59,8 +60,7 @@ app.innerHTML = `
     <div class="tabs"><button id="tab-dispatch" class="active">调度</button><button id="tab-replay">回放</button><button id="inspector-close" class="text-button" aria-label="收起面板">×</button></div>
     <section id="dispatch-pane">
       <div id="station-detail" class="station-detail" hidden></div>
-      <div class="agent-controls"><div class="section-heading"><span>自动调度</span><span class="agent-tag">AGENT</span></div><p>内置启发式策略。操作与公开决策说明自动记入回放。</p><button id="agent-toggle" class="primary full">启动自动调度 ↗</button><details><summary>连接 HTTP Agent</summary><input id="agent-url" value="http://127.0.0.1:8789/decide" aria-label="Agent 地址"/><button id="connect-agent" class="soft-button full">连接并运行</button><small>发送完整状态，包含车站、线路、列车、资源及随机数和内部计时。等待回复时冻结游戏时钟。</small></details><button id="agent-observation" class="text-button">查看 Agent 收到的数据 ↗</button></div>
-      <div id="last-decision" class="last-decision"></div>
+      ${integrationSurface ? `<div class="agent-controls"><div class="section-heading"><span>自动调度</span><span class="agent-tag">AGENT</span></div><p>内置启发式策略。操作与公开决策说明自动记入回放。</p><button id="agent-toggle" class="primary full">启动自动调度 ↗</button><details><summary>连接 HTTP Agent</summary><input id="agent-url" value="http://127.0.0.1:8789/decide" aria-label="Agent 地址"/><button id="connect-agent" class="soft-button full">连接并运行</button><small>发送完整状态，包含车站、线路、列车、资源及随机数和内部计时。等待回复时冻结游戏时钟。</small></details><button id="agent-observation" class="text-button">查看 Agent 收到的数据 ↗</button></div><div id="last-decision" class="last-decision"></div>` : ''}
     </section>
     <section id="replay-pane" hidden>
       <p class="muted">查看操作记录，或还原某次决策前的地图。</p>
@@ -74,14 +74,13 @@ app.innerHTML = `
 </main>
 <footer class="transport-bar"><div class="transport-controls"><button id="play-pause" class="play-button" aria-label="播放或暂停">▶</button><div class="speed-switch" aria-label="运行速度"><button data-speed="1" class="active" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button><button data-speed="4" aria-pressed="false">4×</button></div></div><div id="resources" class="resources" aria-label="剩余调度资源"></div><div class="day-progress"><span id="day-clock">星期一</span><div><i id="day-fill"></i></div><span id="clock">00:00</span></div><div class="footer-right"><span id="control-label">手动规划</span><button id="sound" class="icon-button" title="声音开关">♫</button></div></footer>
 <dialog id="settings-dialog"><form id="settings-form"><span class="eyebrow">LET'S BUILD A LITTLE CITY</span><h2>开始一段新旅程</h2><label>目的地<select id="city-select"><option value="orchard">河湾新城 · 蜿蜒的单河城市</option><option value="harbor">东岸港湾 · 城市东侧的河湾</option><option value="islands">双子群岛 · 两条河流，三片陆地</option></select></label><label>模式<select id="mode-select"><option value="normal">经典 · 拥挤过久将结束旅程</option><option value="endless">无尽 · 保留需求，没有拥挤失败</option><option value="extreme">极限 · 线路只能从端点延长</option><option value="creative">创意 · 充足资源，可手动建站</option></select></label><label>地图种子<input id="seed-input" type="number" min="0" max="4294967295" value="420"/></label><div class="button-pair"><button type="button" id="settings-cancel">再逛一会儿</button><button class="primary" type="submit">出发 ↗</button></div></form></dialog>
-<dialog id="help-dialog"><span class="eyebrow">A POCKET GUIDE</span><h2>地铁乘车指南</h2><ol><li>乘客的形状就是目的地。把不同形状的车站连起来；列车会自动接送和换乘。</li><li>选左侧线路，再从车站拖到另一站。可以连续拖过多站；从端点继续延长，拖回起点闭合环线。</li><li>点“重画线路”重新规划。右键车站可将它移出所选线路；也可在右侧移除。旧路段的列车会先到站再清客。</li><li>每台列车 6 个座位，每节车厢增加 6 个。调度栏可增派、加挂、回收列车或调往别的线路。</li><li>每段跨河连接消耗隧道。车站超过 6 人开始计时，持续 45 秒将结束旅程；减少到 6 人以下，计时会逐渐恢复。枢纽容量为 18 人。</li><li>空格暂停，1–7 选线。每周免费获得一台机车，再选一项补给。可随时暂停规划。</li><li>“旅程回放”支持导入、导出、拖动时间和重建决策前的局面。Agent 决策说明是控制器提供的公开摘要。</li></ol><p class="muted">Mini Metro 核心玩法的独立重建；3 张原创地图、原创程序化画面与音效。原版城市数据及精确节奏未对齐，验证边界见随附 FIDELITY.md。</p><button id="help-close" class="primary full">开始规划</button></dialog>
+<dialog id="help-dialog"><span class="eyebrow">A POCKET GUIDE</span><h2>地铁乘车指南</h2><ol><li>乘客的形状就是目的地。把不同形状的车站连起来；列车会自动接送和换乘。</li><li>选左侧线路，再从车站拖到另一站。可以连续拖过多站；从端点继续延长，拖回起点闭合环线。</li><li>点“重画线路”重新规划。右键车站可将它移出所选线路；也可在右侧移除。旧路段的列车会先到站再清客。</li><li>每台列车 6 个座位，每节车厢增加 6 个。调度栏可增派、加挂、回收列车或调往别的线路。</li><li>每段跨河连接消耗隧道。车站超过 6 人开始计时，持续 45 秒将结束旅程；减少到 6 人以下，计时会逐渐恢复。枢纽容量为 18 人。</li><li>空格暂停，1–7 选线。每周免费获得一台机车，再选一项补给。可随时暂停规划。</li><li>“旅程回放”支持导入、导出、拖动时间和重建决策前的局面。</li>${integrationSurface ? '<li>AI 集成页可读取完整结构化状态并连接外部 Agent；它并非只看屏幕的视觉 AI。</li>' : ''}</ol><p class="muted">Mini Metro 核心玩法的独立重建；3 张原创地图、原创程序化画面与音效。原版城市数据及精确节奏未对齐，验证边界见随附 FIDELITY.md。</p><button id="help-close" class="primary full">开始规划</button></dialog>
 <dialog id="decision-dialog"><span class="eyebrow">AT THE MOMENT OF DECISION</span><h2>决策现场</h2><div id="decision-content"></div><button id="decision-close" class="primary full">返回旅程</button></dialog>
 <dialog id="observation-dialog"><h2>Agent 当前观察</h2><p>这是实际接口的完整 JSON。包含内部状态，并非只看屏幕。HTTP 回复 action，游戏校验并执行。</p><pre id="observation-json"></pre><button id="observation-close" class="primary full">关闭</button></dialog>`;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $('stage'),
   layer = $('station-layer'),
-  overlayLayer = $('overlay-layer'),
   trainLayer = $('train-layer'),
   controller = new MetroController(),
   renderer = new MetroRenderer(stage),
@@ -142,6 +141,7 @@ function resetView(): void {
   stationKey = lineKey = trainKey = detailKey = decisionKey = phaseKey = '';
   selectedStation = null;
   alertCycle = [];
+  $('station-peek').hidden = true;
   alertCycleReplayKey = null;
   $('map-alerts').hidden = true;
   $('map-alerts').dataset.omitted = '';
@@ -279,6 +279,7 @@ stage.addEventListener('pointerdown', (e) => {
   }
   insertAt = null;
   controller.takeControl();
+  $('station-peek').hidden = true;
   selectedStation = id;
   dragStart = { x: e.clientX, y: e.clientY };
   moved = false;
@@ -389,17 +390,18 @@ function removeStation(id: number): void {
 let alertCycle: number[] = [];
 let alertCycleReplayKey: string | null = null;
 function update(): void {
-  const s = controller.getState();
+  const { state: s, events, motion } = controller.getRenderSnapshot();
   // A replay seek changes the authoritative snapshot; only a same-snapshot
   // visual reflow may retain the pending list of omitted stations.
   const replayKey = controller.mode === 'replay' ? `${s.tick}:${controller.focusedDecision ?? ''}` : null;
   if (alertCycleReplayKey !== replayKey) {
     alertCycle = [];
+    $('station-peek').hidden = true;
     alertCycleReplayKey = replayKey;
   }
   controller.selectedLine = Math.min(controller.selectedLine, s.lines.length - 1);
   lastState = s;
-  renderer.render(s, controller.selectedLine, controller.drainServiceEvents(), controller.motion);
+  renderer.render(s, controller.selectedLine, events, motion);
   const sk = s.stations.map((p) => `${p.id}:${p.shape}`).join(',');
   if (sk !== stationKey) {
     stationKey = sk;
@@ -441,10 +443,9 @@ function update(): void {
     const offset = t.to === null && group.length > 1 ? 1.55 : 0.5;
     return [{ x: visual.x - width / 2, y: visual.y - height * offset, width, height }];
   });
-  const placed = layoutOverlays(positions.map(({ p, point }) => ({ id: p.id, x: point.x,
+  const placed = layoutSceneCues(positions.map(({ p, point }) => ({ id: p.id, x: point.x,
     y: point.y, queue: p.queue.length, crowd: p.crowd, selected: p.id === selectedStation })),
-    { width: stageBounds.width, height: stageBounds.height }, stageBounds.width <= 650,
-    reservedBadges);
+    { width: stageBounds.width, height: stageBounds.height }, reservedBadges);
   const byId = new Map(placed.map((item) => [item.id, item]));
   for (const p of s.stations) {
     const q = positionById.get(p.id)!,
@@ -454,49 +455,18 @@ function update(): void {
     n.classList.toggle('selected', p.id === selectedStation);
     n.classList.toggle('crowded', p.queue.length > stationCapacity(p));
     n.setAttribute('aria-label', `${p.id} 号 ${p.shape} 车站，${p.queue.length} 人候车${p.crowd ? `，拥挤还剩 ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒` : ''}`);
-    // The 44px touch target stays on the station; information labels are
-    // separate non-interactive screen-space overlays.
+    // Transparent hit target stays on the station; visible cues render in WebGL.
     if (n.innerHTML) n.innerHTML = '';
   }
-  const liveOverlays = new Set<string>();
-  const show = (key: string, content: string, box: { x: number; y: number; width: number; height: number }, type: string) => {
-    liveOverlays.add(key);
-    let node = overlayLayer.querySelector<HTMLElement>(`[data-overlay="${key}"]`);
-    if (!node) {
-      node = document.createElement('span');
-      node.dataset.overlay = key;
-      overlayLayer.append(node);
-    }
-    node.className = type;
-    node.style.left = `${box.x}px`;
-    node.style.top = `${box.y}px`;
-    node.style.width = `${box.width}px`;
-    node.style.height = `${box.height}px`;
-    if (node.innerHTML !== content) node.innerHTML = content;
-  };
+  renderer.updateSceneCues(s, placed);
   let fallbackWarnings = 0, fallbackQueues = 0;
   const omittedStationIds = new Set<number>();
   for (const p of s.stations) {
     const layout = byId.get(p.id)!;
-    if (layout.queue) {
-      const level = layout.queue.level;
-      const content = level === 'full'
-        ? `${p.queue.slice(0, 8).map((v) => `<i class="shape-${v.shape}">${GLYPHS[v.shape]}</i>`).join('')}${p.queue.length > 8 ? `<b>+${p.queue.length - 8}</b>` : ''}`
-        : level === 'compact'
-          ? `<i class="shape-${p.queue[0].shape}">${GLYPHS[p.queue[0].shape]}</i><b>+${p.queue.length - 1}</b>`
-          : `<b>${p.queue.length}</b>`;
-      show(`q-${p.id}`, content, layout.queue, `passengers overlay-passengers overlay-${level}`);
-    }
-    if (layout.warning) {
-      show(`w-${p.id}`, `⚠ ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒`,
-        layout.warning, 'crowd-countdown overlay-warning');
-    }
     if (layout.warningFallback) fallbackWarnings++;
     if (layout.queueFallback) fallbackQueues++;
     if (layout.warningFallback || layout.queueFallback) omittedStationIds.add(p.id);
   }
-  for (const el of overlayLayer.querySelectorAll<HTMLElement>('[data-overlay]'))
-    if (!liveOverlays.has(el.dataset.overlay!)) el.remove();
   const alerts = $('map-alerts');
   // A captured cycle stays available even if selection temporarily makes all
   // marks fit; the next click still visits its remaining stations.
@@ -632,7 +602,7 @@ function update(): void {
       : controller.mode === 'replay'
         ? '回放模式'
         : '手动规划';
-  $('agent-toggle').textContent =
+  if (integrationSurface) $('agent-toggle').textContent =
     controller.mode === 'agent' ? '接管，自己来规划' : '启动自动调度 ↗';
   const l = s.lines[controller.selectedLine];
   const lk = JSON.stringify([
@@ -684,6 +654,15 @@ function update(): void {
   const p = s.stations.find((p) => p.id === selectedStation),
     dk = JSON.stringify(p);
   $('station-detail').hidden = !p && s.mode !== 'creative';
+  const peek = $('station-peek');
+  if (!peek.hidden) {
+    if (!p) peek.hidden = true;
+    else {
+      const shapes = SHAPES.map((shape) => ({ shape, n: p.queue.filter((v) => v.shape === shape).length }))
+        .filter((item) => item.n).map((item) => `${GLYPHS[item.shape]}×${item.n}`).join(' ');
+      peek.textContent = `车站 ${p.id} · 候车 ${p.queue.length} 人${shapes ? `：${shapes}` : ''} · ${p.crowd ? `拥挤 ${Math.ceil(p.crowd / RULES.hz)} 秒` : '正常'}`;
+    }
+  }
   if (p && dk !== detailKey) {
     detailKey = dk;
     const destinations = SHAPES.map((shape) => ({
@@ -708,9 +687,11 @@ function update(): void {
   const dkey = `${records.length}:${controller.mode}:${decisionPage}:${last?.id}`;
   if (dkey !== decisionKey) {
     decisionKey = dkey;
-    $('last-decision').innerHTML = last
-      ? `<span class="eyebrow">最近一次决策 · ${clock(last.tick)}</span><p>${escape(last.reason || last.action.type)}</p>${!last.result.ok ? `<small class="error">${escape(last.result.message)}</small>` : ''}<button class="text-button" data-decision="${last.id}">查看决策现场 ↗</button>`
-      : '';
+    if (integrationSurface) {
+      $('last-decision').innerHTML = last
+        ? `<span class="eyebrow">最近一次决策 · ${clock(last.tick)}</span><p>${escape(last.reason || last.action.type)}</p>${!last.result.ok ? `<small class="error">${escape(last.result.message)}</small>` : ''}<button class="text-button" data-decision="${last.id}">查看决策现场 ↗</button>`
+        : '';
+    }
     $('decision-count').textContent = String(records.length);
     $('decision-list').innerHTML =
       [...records]
@@ -735,7 +716,7 @@ function update(): void {
     $('game-over').hidden = s.phase !== 'over';
     if (s.phase === 'upgrade')
       $('upgrade-panel').innerHTML =
-        `<div class="supply-stamp">✦</div><span class="eyebrow">A NEW WEEK, A LITTLE GIFT</span><h2>第 ${s.week} 周，继续出发。</h2><p>一台新机车已入库。再为小镇挑一份补给：</p><div class="upgrade-options">${s.upgrades.map((choice) => `<button data-upgrade="${choice}"><b>${choice === 'line' ? '⌁' : choice === 'carriage' ? '▰ ▱' : choice === 'tunnels' ? '⌒ ⌒' : '✦'}</b><strong>${UPGRADE_NAMES[choice]}</strong></button>`).join('')}</div>`;
+        `<div class="supply-stamp">✦</div><span class="eyebrow">A NEW WEEK, A LITTLE GIFT</span><h2>第 ${s.week} 周，继续出发。</h2><p>每周免费机车 ×1 已自动入库。从下方两项中任选一项额外补给；选择不会再次领取机车。</p><div class="upgrade-options">${s.upgrades.map((choice) => `<button data-upgrade="${choice}"><b>${choice === 'line' ? '⌁' : choice === 'carriage' ? '▰ ▱' : choice === 'tunnels' ? '⌒ ⌒' : '✦'}</b><strong>${UPGRADE_NAMES[choice]}</strong></button>`).join('')}</div>`;
     if (s.phase === 'over')
       $('game-over').innerHTML =
         `<div class="supply-stamp">♧</div><span class="eyebrow">THANK YOU FOR THE JOURNEY</span><h2>小镇需要休息一会儿。</h2><p>${s.lostStation} 站拥挤过久。这段旅程共送达</p><strong class="final-score">${s.score}<small> 位乘客</small></strong><div class="button-pair"><button id="over-replay">回看这段旅程</button><button id="over-restart" class="primary">相同种子重试 ↗</button><button id="over-new-seed">新种子开局</button></div>`;
@@ -756,9 +737,16 @@ $('map-alerts').onclick = () => {
   if (nextId === undefined) return;
   selectedStation = nextId;
   setInspector(false);
-  update();
   const label = nodes.get(nextId);
   if (label) label.focus({ preventScroll: true });
+  update();
+  const station = controller.getState().stations.find((p) => p.id === nextId);
+  if (station) {
+    const shapes = SHAPES.map((shape) => ({ shape, n: station.queue.filter((v) => v.shape === shape).length }))
+      .filter((item) => item.n).map((item) => `${GLYPHS[item.shape]}×${item.n}`).join(' ');
+    $('station-peek').textContent = `车站 ${station.id} · 候车 ${station.queue.length} 人${shapes ? `：${shapes}` : ''} · ${station.crowd ? `拥挤 ${Math.ceil(station.crowd / RULES.hz)} 秒` : '正常'}`;
+    $('station-peek').hidden = false;
+  }
 };
 $('line-tools-toggle').onclick = () => setLineTools($('line-tools').hidden);
 $('line-tools-close').onclick = () => setLineTools(false);
@@ -771,12 +759,14 @@ $('replay-toggle').onclick = () => {
   else setTab(true);
 };
 $('inspector-close').onclick = () => setInspector(false);
-$('agent-observation').onclick = () => {
-  controller.setPaused(true);
-  $('observation-json').textContent = JSON.stringify(observeState(controller.getState()), null, 2);
-  $<HTMLDialogElement>('observation-dialog').showModal();
-};
-$('observation-close').onclick = () => $<HTMLDialogElement>('observation-dialog').close();
+if (integrationSurface) {
+  $('agent-observation').onclick = () => {
+    controller.setPaused(true);
+    $('observation-json').textContent = JSON.stringify(observeState(controller.getState()), null, 2);
+    $<HTMLDialogElement>('observation-dialog').showModal();
+  };
+  $('observation-close').onclick = () => $<HTMLDialogElement>('observation-dialog').close();
+}
 
 $('line-list').addEventListener('click', (e) => {
   const b = (e.target as Element).closest<HTMLElement>('[data-line]');
@@ -823,11 +813,6 @@ $('train-list').addEventListener('click', (e) => {
       );
   }
 });
-$('sample-route').onclick = () => {
-  const r = controller.submit(dispatcherPolicy(controller.observe()), 'demo');
-  if (r.ok) controller.setPaused(false);
-  toast(r.message);
-};
 $('play-pause').onclick = () => controller.setPaused(!controller.paused);
 document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach(
   (b) =>
@@ -841,26 +826,28 @@ document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach(
         });
     }),
 );
-$('agent-toggle').onclick = () => {
-  if (controller.mode === 'agent') {
-    controller.takeControl();
-    toast('已接管调度。');
-  } else
+if (integrationSurface) {
+  $('agent-toggle').onclick = () => {
+    if (controller.mode === 'agent') {
+      controller.takeControl();
+      toast('已接管调度。');
+    } else
+      try {
+        controller.startAgent();
+        toast('内置调度策略已接入。');
+      } catch (e) {
+        toast(String(e));
+      }
+  };
+  $('connect-agent').onclick = () => {
     try {
-      controller.startAgent();
-      toast('内置调度策略已接入。');
+      controller.connectHttp($<HTMLInputElement>('agent-url').value);
+      toast('正在连接 HTTP Agent。');
     } catch (e) {
       toast(String(e));
     }
-};
-$('connect-agent').onclick = () => {
-  try {
-    controller.connectHttp($<HTMLInputElement>('agent-url').value);
-    toast('正在连接 HTTP Agent。');
-  } catch (e) {
-    toast(String(e));
-  }
-};
+  };
+}
 $('tab-dispatch').onclick = () => setTab(false);
 $('tab-replay').onclick = () => setTab(true);
 $('sound').onclick = async () => {
@@ -1158,6 +1145,7 @@ const api = {
   seek: (tick: number) => controller.seek(tick),
   focusDecision: (index: number) => controller.focusDecision(index),
   observationAtDecision: (i: number) => controller.observationAtDecision(i),
+  // Capture only the game canvas, with its scene cues, not DOM HUD or AI controls.
   capture: () => renderer.capture(),
   projectStation: (id: number) => {
     const p = controller.getState().stations.find((p) => p.id === id);
@@ -1166,6 +1154,7 @@ const api = {
       rect = stage.getBoundingClientRect();
     return { x: point.x + rect.left, y: point.y + rect.top };
   },
+  sceneCues: () => renderer.cueStats(),
   hash: () => hash(controller.getState()),
 };
 (window as unknown as { metro: typeof api }).metro = api;

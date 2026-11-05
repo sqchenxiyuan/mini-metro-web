@@ -14,6 +14,13 @@ import type {
   State,
 } from './types';
 
+/** One presentation frame, detached from simulation state and replay authority. */
+export interface RenderSnapshot {
+  state: State;
+  events: ServiceEvent[];
+  motion: { previous: State | null; alpha: number };
+}
+
 export class MetroController {
   private session: Session;
   private player: ReplayPlayer | null = null;
@@ -49,6 +56,15 @@ export class MetroController {
       return [];
     }
     return this.session.drainServiceEvents();
+  }
+  /** Consume a coherent frame after the controller's logic tick, never during it. */
+  getRenderSnapshot(): RenderSnapshot {
+    const motion = this.motion;
+    return {
+      state: this.getState(),
+      events: structuredClone(this.drainServiceEvents()),
+      motion: { previous: motion.previous ? structuredClone(motion.previous) : null, alpha: motion.alpha },
+    };
   }
   constructor(options: Options = {}) {
     this.session = new Session(options);

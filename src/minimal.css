@@ -1,44 +1,26 @@
-#overlay-layer {
+#station-peek {
   position: absolute;
-  inset: 0;
-  z-index: 3;
+  z-index: 9;
+  left: 8px;
+  right: 8px;
+  bottom: 106px;
+  max-width: 620px;
+  max-height: 86px;
+  margin: 0 auto;
+  padding: 9px 12px;
+  overflow: auto;
+  border: 1px solid #d9cadf;
+  border-radius: 9px;
+  background: #fffaf6f2;
+  color: #554963;
+  box-shadow: 0 3px 12px #36264224;
+  font-size: 14px;
+  line-height: 1.4;
   pointer-events: none;
 }
-#overlay-layer [data-overlay] {
-  position: absolute;
-  box-sizing: border-box;
-  margin: 0;
-  transform: none;
-  pointer-events: none;
-  overflow: hidden;
-}
-#overlay-layer .overlay-passengers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  padding: 2px;
-  line-height: 12px;
-  border-radius: 4px;
-  background: #fff8f5e0;
-  color: #5d526d;
-}
-#overlay-layer .overlay-passengers i { font-size: 10px; font-style: normal; }
-#overlay-layer .overlay-passengers b { font-size: 10px; }
-#overlay-layer .overlay-compact,
-#overlay-layer .overlay-count { flex-wrap: nowrap; white-space: nowrap; }
-#overlay-layer .overlay-warning {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 2px;
-  line-height: 19px;
-  font-size: 10px;
-  white-space: nowrap;
-  background: #fbe5e9;
-  color: #8f354a;
-  border-radius: 5px;
+#station-peek[hidden] { display: none; }
+@media (max-width: 650px) {
+  #station-peek { bottom: 112px; font-size: 13px; max-height: 76px; }
 }
 #map-alerts {
   position: absolute;
@@ -186,13 +168,13 @@ h1 {
   margin: 0;
 }
 .city-heading strong {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 400;
   letter-spacing: 0;
   color: #877d96;
 }
 .city-heading > span:last-child {
-  font-size: 10px;
+  font-size: 12px;
   color: #968b9f;
 }
 .score-block {
@@ -216,7 +198,7 @@ h1 {
   font-weight: 500;
 }
 .score-block div > span {
-  font-size: 10px;
+  font-size: 12px;
   color: #92869d;
   margin: 0;
 }
@@ -224,7 +206,7 @@ h1 {
   gap: 22px;
 }
 .header-actions .text-button {
-  font-size: 12px;
+  font-size: 14px;
   padding: 6px 0;
 }
 .header-actions .text-button[aria-expanded='true'] {
@@ -254,10 +236,10 @@ h1 {
   left: 96px;
   right: 28px;
   letter-spacing: 0;
-  font-size: 10px;
+  font-size: 12px;
 }
 .map-heading > span {
-  font-size: 10px;
+  font-size: 12px;
   color: #93879c;
 }
 .live-dot {
@@ -296,10 +278,10 @@ h1 {
   border-radius: 0;
   white-space: nowrap;
   color: #8b7d98;
-  font-size: 12px;
+  font-size: 14px;
 }
 .map-hint button {
-  font-size: 11px;
+  font-size: 13px;
   padding: 5px;
   margin: 0;
   color: #9a739d;
@@ -373,7 +355,7 @@ h1 {
   position: absolute;
   left: 57px;
   top: 0;
-  width: 252px;
+  width: 280px;
   grid-row: auto;
   padding: 20px;
   margin: 0;
@@ -394,10 +376,16 @@ h1 {
   min-height: 0;
 }
 .button-pair > button {
-  font-size: 11px;
+  font-size: 13px;
 }
 .train-row > div {
   gap: 3px;
+}
+.line-detail .train-row {
+  font-size: 12px;
+}
+.line-detail .train-row small {
+  font-size: 11px;
 }
 .train-row button {
   padding: 3px 5px;
@@ -423,8 +411,8 @@ h1 {
   bottom: 42px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 19px;
   border: 0;
   box-shadow: none !important;
   color: #79658f;
@@ -435,7 +423,7 @@ h1 {
   margin: 0;
 }
 .station-tag small {
-  font-size: 9px;
+  font-size: 11px;
   color: #9d8ba9;
 }
 .station-label:hover .station-tag,
@@ -484,7 +472,7 @@ h1 {
   top: 4px;
   bottom: 12px;
   right: 16px;
-  width: 304px;
+  width: 330px;
   max-width: calc(100% - 28px);
   max-height: none;
   padding: 20px 23px;
@@ -505,6 +493,9 @@ h1 {
   margin-bottom: 20px;
   align-items: center;
 }
+.right-panel .tabs button {
+  font-size: 14px;
+}
 #inspector-close {
   margin-left: auto;
   font-size: 21px;
@@ -515,16 +506,16 @@ h1 {
   padding-top: 0;
 }
 .agent-controls > p {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.9;
   margin: 12px 0 15px;
 }
 .agent-controls details {
-  font-size: 11px;
+  font-size: 13px;
   margin: 18px 0;
 }
 .agent-controls details small {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.8;
 }
 #agent-observation {
@@ -549,14 +540,14 @@ h1 {
   display: none;
 }
 .last-decision p {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.8;
 }
 .decision-row p {
-  font-size: 11px;
+  font-size: 13px;
 }
 .history-row {
-  font-size: 11px;
+  font-size: 13px;
 }
 .transport-bar {
   height: 56px;
@@ -609,7 +600,7 @@ h1 {
   padding: 0;
 }
 .resources span {
-  font-size: 11px;
+  font-size: 12px;
   color: #887b96;
   white-space: nowrap;
 }
@@ -620,7 +611,7 @@ h1 {
   white-space: nowrap;
 }
 .resources small {
-  font-size: 10px;
+  font-size: 12px;
   color: #a69bad;
 }
 .day-progress {
@@ -636,7 +627,7 @@ h1 {
 }
 .footer-right {
   gap: 16px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .footer-right .icon-button {
   border: 0;
@@ -741,13 +732,13 @@ input, select { accent-color: #a383bd; }
     font-size: 22px;
   }
   .score-block div > span {
-    font-size: 9px;
+    font-size: 11px;
   }
   .header-actions {
     gap: 17px;
   }
   .header-actions .text-button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .header-actions .icon-button {
     display: inline-grid;
@@ -807,7 +798,7 @@ input, select { accent-color: #a383bd; }
   .line-detail {
     left: 0;
     top: 48px;
-    width: 250px;
+    width: min(300px, calc(100vw - 16px));
     margin: 0;
     padding: 20px;
     max-height: calc(100dvh - 270px);
@@ -816,21 +807,21 @@ input, select { accent-color: #a383bd; }
     top: 12px;
     left: 21px;
     right: 20px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .map-heading > span {
-    font-size: 9px;
+    font-size: 11px;
   }
   .map-hint {
     bottom: 45px;
-    font-size: 11px;
+    font-size: 13px;
     gap: 10px;
     padding: 0;
     min-width: 0;
     max-width: calc(100% - 20px);
   }
   .map-hint button {
-    font-size: 10px;
+    font-size: 12px;
     margin: 0;
   }
   .map-tools {
@@ -842,7 +833,7 @@ input, select { accent-color: #a383bd; }
     bottom: 3px;
     right: 12px;
     padding: 20px;
-    width: 300px;
+    width: min(330px, calc(100vw - 24px));
     background: #fffaf8fc;
     overflow: auto;
     border: 1px solid var(--border);
@@ -879,10 +870,10 @@ input, select { accent-color: #a383bd; }
     gap: 6px;
   }
   .resources span {
-    font-size: 10px;
+    font-size: 11px;
   }
   .resources b {
-    font-size: 13px;
+    font-size: 15px;
   }
   .day-progress {
     width: auto;
@@ -895,7 +886,7 @@ input, select { accent-color: #a383bd; }
     display: none;
   }
   .day-progress > span {
-    font-size: 9px;
+    font-size: 11px;
   }
   .day-progress > span:first-child {
     margin-left: auto;
@@ -908,11 +899,11 @@ input, select { accent-color: #a383bd; }
     height: 25px;
   }
   .station-tag {
-    font-size: 11px;
-    line-height: 16px;
+    font-size: 13px;
+    line-height: 19px;
   }
   .station-tag small {
-    font-size: 9px;
+    font-size: 11px;
   }
   .passengers {
     width: 58px;
@@ -993,9 +984,9 @@ input, select { accent-color: #a383bd; }
     gap: 2px;
     min-width: 0;
   }
-  .resources span { font-size: 9px; }
-  .resources b { font-size: 11px; }
-  .resources small { font-size: 8px; }
+  .resources span { font-size: 12px; }
+  .resources b { font-size: 13px; }
+  .resources small { font-size: 10px; }
   .day-progress { gap: 3px; }
   .footer-right .icon-button { width: 44px; height: 44px; }
   .map-tools button { min-width: 44px; min-height: 44px; }

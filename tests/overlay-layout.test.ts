@@ -1,5 +1,64 @@
 import { describe, expect, it } from 'vitest';
-import { layoutOverlays } from '../src/overlay-layout';
+import { layoutOverlays, layoutSceneCues } from '../src/overlay-layout';
+
+const overlaps = (a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number }) =>
+  a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+
+describe('anchored WebGL cue placement', () => {
+  it('avoids all station touch rectangles and other actual cue bounds at phone density', () => {
+    const stations = Array.from({ length: 16 }, (_, i) => ({ id: i + 1,
+      x: 75 + (i % 4) * 35, y: 180 + Math.floor(i / 4) * 42,
+      queue: i % 3 ? 12 : 2, crowd: i % 4 === 0 ? 300 : 0, selected: i === 4 }));
+    const reserved = [{ x: 38, y: 100, width: 34, height: 34 }];
+    const placed = layoutSceneCues(stations, { width: 390, height: 708 }, reserved);
+    const visible = placed.flatMap((p) => [p.queue, p.warning].filter((v) => v !== null));
+    expect(visible.length).toBeGreaterThan(0);
+    for (const cue of visible) {
+      expect(overlaps(cue!, reserved[0])).toBe(false);
+      const owner = placed.find((p) => p.queue === cue || p.warning === cue)!.id;
+      for (const station of stations.filter((p) => p.id !== owner)) expect(overlaps(cue!, {
+        x: station.x - 22, y: station.y - 5, width: 44, height: 44,
+      })).toBe(false);
+      expect(cue!.x).toBeGreaterThanOrEqual(0);
+      expect(cue!.x + cue!.width).toBeLessThanOrEqual(390);
+    }
+    for (const item of placed) for (const cue of [item.queue, item.warning]) if (cue) {
+      const station = stations.find((p) => p.id === item.id)!;
+      expect(Math.hypot(cue.x + cue.width / 2 - station.x,
+        cue.y + cue.height / 2 - station.y)).toBeLessThanOrEqual(36);
+    }
+    for (let i = 0; i < visible.length; i++) for (let j = i + 1; j < visible.length; j++)
+      expect(overlaps(visible[i]!, visible[j]!)).toBe(false);
+    expect(placed.filter((p) => p.queueFallback).length).toBe(stations.filter((p) => p.queue).length -
+      placed.filter((p) => p.queue).length);
+    expect(placed.filter((p) => p.warningFallback).length).toBe(stations.filter((p) => p.crowd).length -
+      placed.filter((p) => p.warning).length);
+  });
+  it('places warning detail first and keeps it at the owning anchor rather than a detached card', () => {
+    const stations = [{ id: 1, x: 180, y: 170, queue: 4, crowd: 300, selected: true },
+      { id: 2, x: 213, y: 151, queue: 8, crowd: 300, selected: false }];
+    const placed = layoutSceneCues(stations, { width: 390, height: 708 });
+    expect(placed[0].warning).not.toBeNull();
+    expect(placed[0].warningFallback).toBe(false);
+    for (const item of placed) if (item.warning) {
+      expect(Math.hypot(item.warning.x + item.warning.width / 2 - stations[item.id - 1].x,
+        item.warning.y + item.warning.height / 2 - stations[item.id - 1].y)).toBeLessThanOrEqual(55);
+    }
+    expect(placed.flatMap((p) => [p.queue, p.warning].filter(Boolean)).every((box) =>
+      !overlaps(box!, { x: 191, y: 146, width: 44, height: 44 }) ||
+      placed[1].queue === box || placed[1].warning === box)).toBe(true);
+  });
+  it('falls back instead of pushing a sparse warning or queue away from its station', () => {
+    const placed = layoutSceneCues([{ id: 19, x: 180, y: 180, queue: 6, crowd: 100, selected: true }],
+      { width: 390, height: 708 });
+    const shown = [placed[0].queue, placed[0].warning].filter((box) => box !== null);
+    expect(shown.length).toBeGreaterThan(0);
+    for (const cue of shown) expect(Math.hypot(cue!.x + cue!.width / 2 - 180,
+      cue!.y + cue!.height / 2 - 180)).toBeLessThanOrEqual(36);
+    expect(Number(placed[0].queueFallback) + Number(placed[0].warningFallback)).toBe(2 - shown.length);
+  });
+});
 
 describe('map information overlay placement', () => {
   it('keeps the station hit target separate while placing dense queues without collisions', () => {

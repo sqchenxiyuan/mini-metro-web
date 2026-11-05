@@ -2,6 +2,7 @@ import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 
 const browser = await chromium.launch({ headless: true,
+  ...(process.env.METRO_BROWSER_EXECUTABLE_PATH ? { executablePath: process.env.METRO_BROWSER_EXECUTABLE_PATH } : {}),
   args: ['--enable-webgl', '--use-gl=angle', '--use-angle=swiftshader'] });
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
@@ -11,7 +12,7 @@ try {
   await page.waitForTimeout(150);
   const counts = await page.evaluate(() => {
     const station = window.metro.getState().stations.find((s) => s.id === 2);
-    const warning = document.querySelector('[data-overlay="w-2"]');
+    const warning = window.metro.sceneCues().ringStationIds.includes(2);
     const old = document.querySelector('[data-station="2"] .crowd-countdown');
     return { station: !!station, old: !!old, warning: !!warning };
   });

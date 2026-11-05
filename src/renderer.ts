@@ -12,6 +12,7 @@ import {
   trackPosition,
 } from './rules';
 import type { City, ServiceEvent, Shape, State, Station } from './types';
+import { queueCueBounds, warningCueBounds, type OverlayPlacement } from './overlay-layout';
 import { deriveTrackLayout } from './track-layout';
 
 /** Share the renderer's offset/miter geometry with pointer hit testing. */
@@ -261,6 +262,40 @@ function disposeBadge(badge: THREE.Sprite): void {
   (badge.material as THREE.SpriteMaterial).map?.dispose();
   badge.material.dispose();
 }
+
+type CueEntry = { group: THREE.Group; signature: string; labels: THREE.Mesh[] };
+const CUE_COLORS: Record<Shape, string> = {
+  circle: '#a44c77', triangle: '#347c70', square: '#6c4c99', diamond: '#316b9d',
+  star: '#9e6b21', cross: '#ad5352', pentagon: '#7757a3', egg: '#827037',
+  gem: '#337487', wedge: '#8d6745',
+};
+function cueText(value: string, color: string, geometry: THREE.PlaneGeometry): THREE.Mesh {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(64, Math.ceil(value.length * 18 + 24));
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d')!;
+  ctx.font = 'bold 24px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#fff9f3';
+  ctx.strokeText(value, canvas.width / 2, 16);
+  ctx.fillStyle = color;
+  ctx.fillText(value, canvas.width / 2, 16);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const label = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture, transparent: true,
+    depthTest: false, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+  label.scale.set(Math.min(36, Math.max(16, value.length * 8)), 17, 1);
+  return label;
+}
+function disposeCue(entry: CueEntry): void {
+  for (const label of entry.labels) {
+    (label.material as THREE.MeshBasicMaterial).map?.dispose();
+    (label.material as THREE.Material).dispose();
+  }
+  entry.group.clear();
+}
 type LoadSnapshot = { tick: number; seed: number };
 type Transfer = { sprite: THREE.Sprite; start: THREE.Vector3; end: THREE.Vector3; tick: number };
 function transferMarker(shape: Shape): THREE.Sprite {
@@ -301,6 +336,18 @@ export class MetroRenderer {
   private stations = new Map<number, THREE.Group>();
   private trains = new Map<number, { group: THREE.Group; carriages: number; line: number; loadKey: string }>();
   private transfers = new THREE.Group();
+  private sceneCues = new THREE.Scene();
+  private cueCamera = new THREE.OrthographicCamera(0, 1, 0, 1, -10, 10);
+  private cueEntries = new Map<string, CueEntry>();
+  private cueBounds: { id: number; kind: 'queue' | 'warning'; x: number; y: number; width: number; height: number }[] = [];
+  private cueShapes = new Map<Shape, { geometry: THREE.ShapeGeometry; material: THREE.MeshBasicMaterial }>();
+  private cueLabelGeometry = new THREE.PlaneGeometry(1, 1);
+  private warningGeometry = new THREE.BufferGeometry();
+  private warningRingGeometry = new THREE.RingGeometry(12, 14, 36);
+  private warningBarGeometry = new THREE.PlaneGeometry(1.6, 5.5);
+  private warningDotGeometry = new THREE.PlaneGeometry(1.6, 1.6);
+  private warningMaterial = new THREE.MeshBasicMaterial({ color: '#dc7136', side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false });
+  private warningInk = new THREE.MeshBasicMaterial({ color: '#392538', side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false });
   private activeTransfers: Transfer[] = [];
   private loadSnapshot: LoadSnapshot | null = null;
   private city: City | null = null;
@@ -351,6 +398,7 @@ export class MetroRenderer {
     sun.shadow.radius = 3;
     this.scene.add(sun);
     this.scene.add(this.environment, this.tracks, this.preview, this.transfers);
+    this.cueCamera.position.z = 10;
     this.camera.position.set(0, 32, 24);
     this.camera.lookAt(0, 0, 0);
     this.observer = new ResizeObserver(() => this.resize());
@@ -407,6 +455,142 @@ export class MetroRenderer {
     this.camera.top = half;
     this.camera.bottom = -half;
     this.camera.updateProjectionMatrix();
+    this.cueCamera.left = 0;
+    this.cueCamera.right = this.bounds.width;
+    this.cueCamera.top = 0;
+    this.cueCamera.bottom = this.bounds.height;
+    this.cueCamera.updateProjectionMatrix();
+  }
+  private cueShape(shape: Shape, x: number): THREE.Mesh {
+    let shared = this.cueShapes.get(shape);
+    if (!shared) {
+      shared = { geometry: new THREE.ShapeGeometry(stationOutline(shape, 5)),
+        material: new THREE.MeshBasicMaterial({ color: CUE_COLORS[shape],
+          side: THREE.DoubleSide, depthTest: false, toneMapped: false }) };
+      this.cueShapes.set(shape, shared);
+    }
+    const icon = new THREE.Mesh(shared.geometry, shared.material);
+    icon.position.x = x;
+    icon.scale.y = -1;
+    icon.userData.shape = shape;
+    return icon;
+  }
+  /** Draw the placed in-scene geometry after render(); ring stays on its station. */
+  updateSceneCues(s: Readonly<State>, placements: readonly OverlayPlacement[]): void {
+    this.cueBounds = placements.flatMap(({ id, queue, warning }) => [
+      ...(queue ? [{ id, kind: 'queue' as const, ...queue }] : []),
+      ...(warning ? [{ id, kind: 'warning' as const, ...warning }] : []),
+    ]);
+    const byId = new Map(placements.map((item) => [item.id, item]));
+    const live = new Set<string>();
+    const place = (key: string, x: number, y: number, signature: string,
+      build: (entry: CueEntry) => void) => {
+      live.add(key);
+      let entry = this.cueEntries.get(key);
+      if (!entry) {
+        entry = { group: new THREE.Group(), signature: '', labels: [] };
+        entry.group.name = key;
+        this.sceneCues.add(entry.group);
+        this.cueEntries.set(key, entry);
+      }
+      entry.group.position.set(x, y, 0);
+      if (entry.signature !== signature) {
+        disposeCue(entry);
+        build(entry);
+        entry.signature = signature;
+      }
+    };
+    for (const p of s.stations) {
+      const layout = byId.get(p.id);
+      const anchor = this.project(p.x, p.y, 0.6);
+      if (layout?.queue && p.queue.length) {
+        const level = layout.queue.level ?? 'full';
+        const local = queueCueBounds(p.queue.length, level);
+        const shapes = (level === 'full' ? p.queue.slice(0, 3) :
+          level === 'compact' ? p.queue.slice(0, 1) : []).map((passenger) => passenger.shape);
+        const extra = level === 'count' ? String(p.queue.length) :
+          p.queue.length > shapes.length ? `+${p.queue.length - shapes.length}` : '';
+        place(`queue-${p.id}`, layout.queue.x - local.x, layout.queue.y - local.y,
+          JSON.stringify([level, shapes, extra]), (entry) => {
+            const occupied = shapes.length * 11 + (extra ? Math.min(27, extra.length * 8) : 0);
+            shapes.forEach((shape, index) => entry.group.add(this.cueShape(shape,
+              -occupied / 2 + index * 11 + 5.5)));
+            if (extra) {
+              const label = cueText(extra, '#283248', this.cueLabelGeometry);
+              label.position.set(occupied / 2 - label.scale.x / 2, 0, 1);
+              label.renderOrder = 3;
+              entry.group.add(label);
+              entry.labels.push(label);
+            }
+          });
+      }
+      if (p.crowd > 0) {
+        const seconds = Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz);
+        const compact = !layout?.warning;
+        place(`warning-${p.id}`, anchor.x, anchor.y,
+          `${seconds}:${compact}`, (entry) => {
+            const ring = new THREE.Mesh(this.warningRingGeometry, this.warningMaterial);
+            ring.name = 'warning-ring';
+            ring.position.z = 0.5;
+            entry.group.add(ring);
+            if (compact) return;
+            const detail = new THREE.Group();
+            detail.name = 'warning-detail';
+            entry.group.add(detail);
+            if (!this.warningGeometry.getAttribute('position')) {
+              this.warningGeometry.setAttribute('position', new THREE.Float32BufferAttribute(
+                [12, -12, 0, 19, -25, 0, 26, -12, 0], 3));
+            }
+            const triangle = new THREE.Mesh(this.warningGeometry, this.warningMaterial);
+            triangle.name = 'warning-symbol';
+            detail.add(triangle);
+            const bar = new THREE.Mesh(this.warningBarGeometry, this.warningInk);
+            bar.position.set(19, -17.8, 0.1);
+            detail.add(bar);
+            const dot = new THREE.Mesh(this.warningDotGeometry, this.warningInk);
+            dot.position.set(19, -14, 0.1);
+            detail.add(dot);
+            const label = cueText(`${seconds}s`, '#ad3e2a', this.cueLabelGeometry);
+            label.position.set(19, -32, 1);
+            label.renderOrder = 3;
+            detail.add(label);
+            entry.labels.push(label);
+          });
+        if (layout?.warning) {
+          const detail = this.cueEntries.get(`warning-${p.id}`)!.group.getObjectByName('warning-detail')!;
+          detail.position.set(layout.warning.x - anchor.x - warningCueBounds.x,
+            layout.warning.y - anchor.y - warningCueBounds.y, 0);
+        }
+      }
+    }
+    for (const [key, entry] of this.cueEntries) if (!live.has(key)) {
+      this.sceneCues.remove(entry.group);
+      disposeCue(entry);
+      this.cueEntries.delete(key);
+    }
+    // Render over the 3D game without clearing color; marks stay CSS-pixel sized.
+    if (this.cueEntries.size) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.sceneCues, this.cueCamera);
+      this.renderer.autoClear = true;
+    }
+  }
+  cueStats(): { queueCount: number; warningCount: number; ringCount: number;
+    queueStationIds: number[]; warningStationIds: number[]; ringStationIds: number[];
+    bounds: readonly { id: number; kind: 'queue' | 'warning'; x: number; y: number; width: number; height: number }[] } {
+    const queueStationIds: number[] = [], warningStationIds: number[] = [], ringStationIds: number[] = [];
+    for (const [key, entry] of this.cueEntries) {
+      const id = Number(key.slice(key.indexOf('-') + 1));
+      if (key.startsWith('queue-')) queueStationIds.push(id);
+      else if (key.startsWith('warning-')) {
+        ringStationIds.push(id);
+        if (entry.group.getObjectByName('warning-symbol')) warningStationIds.push(id);
+      }
+    }
+    return { queueCount: queueStationIds.length, warningCount: warningStationIds.length,
+      ringCount: ringStationIds.length, queueStationIds, warningStationIds, ringStationIds,
+      bounds: this.cueBounds };
   }
   private buildEnvironment(city: City): void {
     disposeGroup(this.environment);
@@ -817,6 +1001,21 @@ export class MetroRenderer {
   dispose(): void {
     this.observer.disconnect();
     this.clearTransfers();
+    for (const entry of this.cueEntries.values()) disposeCue(entry);
+    this.cueEntries.clear();
+    this.sceneCues.clear();
+    for (const { geometry, material } of this.cueShapes.values()) {
+      geometry.dispose();
+      material.dispose();
+    }
+    this.cueShapes.clear();
+    this.cueLabelGeometry.dispose();
+    this.warningGeometry.dispose();
+    this.warningRingGeometry.dispose();
+    this.warningBarGeometry.dispose();
+    this.warningDotGeometry.dispose();
+    this.warningMaterial.dispose();
+    this.warningInk.dispose();
     this.loadSnapshot = null;
     this.previousTrainAnchors.clear();
     this.trackLayout = null;

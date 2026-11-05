@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f2e8" />
+    <meta name="metro-surface" content="integration" />
+    <title>小小地铁 · AI 集成</title>
+    <style>
+      /* The integration shell is an entrypoint-only frame; shared game styles remain in main.ts. */
+      body { margin: 0; background: #e9ede4; color: #3c514a; }
+      .integration-heading { max-width: 1420px; margin: 0 auto; padding: 14px 18px 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .integration-heading h1 { margin: 0; font-size: 16px; }
+      .integration-heading a { color: #416456; }
+      #game-shell { width: min(1420px, calc(100% - 32px)); margin: 0 auto; border: 1px solid #dbe4d8; border-radius: 12px; overflow: hidden; background: #f6f4eb; box-shadow: 0 8px 30px #4052471c; }
+      #game-shell .workspace { height: max(560px, calc(100dvh - 245px)); }
+      #integration-controls { max-width: 1100px; margin: 18px auto 32px; padding: 18px; background: #fbfaf4; border: 1px solid #dbe4d8; border-radius: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+      #integration-controls h2 { font-size: 16px; margin: 0 0 10px; }
+      #integration-controls p { line-height: 1.5; }
+      #integration-controls label { display: block; margin: 9px 0; }
+      #integration-controls input, #integration-controls textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 5px; padding: 7px; }
+      #integration-controls button { margin: 5px 5px 5px 0; }
+      #integration-controls pre { max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+      #integration-controls img { max-width: 100%; height: auto; }
+      #integration-status { min-height: 1.5em; }
+      @media (max-width: 700px) { #game-shell { width: 100%; border-radius: 0; } #integration-controls { margin: 12px; } }
+    </style>
+  </head>
+  <body>
+    <header class="integration-heading"><h1>小小地铁 · AI 集成视图</h1><a href="./index.html">返回普通游戏</a></header>
+    <section id="game-shell"><div id="app"></div></section>
+    <aside id="integration-controls" aria-label="外部 AI 视觉与操作设置">
+      <section><h2>视觉观察</h2><p>按需截取当前游戏画面；截图不会自动发送到外部服务。结构化观察包含完整内部状态。</p><button id="integration-capture" type="button">截取游戏画面</button><button id="integration-observe" type="button">查看结构化观察</button><img id="integration-image" alt="最近一次游戏画面截图" hidden /><pre id="integration-observation" aria-live="polite"></pre></section>
+      <section><h2>操作与连接</h2><label>决策 JSON<textarea id="integration-decision" rows="4" spellcheck="false">{"action":{"type":"wait"}}</textarea></label><button id="integration-submit" type="button">提交决策</button><label>HTTP Agent 地址<input id="integration-agent-url" type="url" value="http://127.0.0.1:8789/decide" autocomplete="off" /></label><button id="integration-connect" type="button">连接并运行</button><button id="integration-stop" type="button">停止 Agent</button><p id="integration-status" role="status"></p><small>外部服务将收到完整结构化状态。浏览器连接需允许跨域请求；不要把含密钥的地址用于共享部署。</small></section>
+    </aside>
+    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/integration.ts"></script>
+  </body>
+</html>
