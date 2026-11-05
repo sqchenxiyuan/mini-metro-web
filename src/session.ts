@@ -21,7 +21,7 @@ import type {
   State,
 } from './types';
 
-export const MAX_TICKS = 432000; // Six hours at 20 Hz; a replay safety limit, not a win condition.
+export const MAX_TICKS = 1080000; // Six hours at 50 Hz; a replay safety limit, not a win condition.
 export const MAX_REPLAY_BYTES = 32 * 1024 * 1024;
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -77,7 +77,7 @@ export class Session {
   constructor(options: Options = {}) {
     this.state = createState(options);
     this.recording = {
-      format: 'orchard-metro.replay.v3',
+      format: 'orchard-metro.replay.v4',
       createdAt: new Date().toISOString(),
       options: { seed: this.state.seed, city: this.state.city, mode: this.state.mode },
       duration: 0,
@@ -148,7 +148,7 @@ export class Session {
       if (this.serviceEvents.length && this.serviceEvents[0].tick < this.tick - 7)
         this.serviceEvents = this.serviceEvents.filter((event) => event.tick >= this.tick - 7);
       advanced++;
-      if (this.tick % 600 === 0) this.checkpoint();
+      if (this.tick % 1500 === 0) this.checkpoint();
     }
     return advanced;
   }
@@ -179,7 +179,7 @@ export class ReplayPlayer {
     const r = JSON.parse(json) as Replay;
     if (
       !r ||
-      r.format !== 'orchard-metro.replay.v3' ||
+      r.format !== 'orchard-metro.replay.v4' ||
       typeof r.createdAt !== 'string' ||
       r.createdAt.length > 40 ||
       !Number.isFinite(Date.parse(r.createdAt)) ||
@@ -193,7 +193,7 @@ export class ReplayPlayer {
       !Array.isArray(r.decisions) ||
       r.decisions.length > 50000 ||
       !Array.isArray(r.checkpoints) ||
-      r.checkpoints.length > MAX_TICKS / 600 + 1 ||
+      r.checkpoints.length > MAX_TICKS / 1500 + 1 ||
       typeof r.finalHash !== 'string'
     )
       throw new Error('录像结构不合法');

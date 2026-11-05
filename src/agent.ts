@@ -212,8 +212,8 @@ export async function runAgent(
   } = {},
 ): Promise<{ replay: Replay; errors: number; reason: string }> {
   const {
-    maxTicks = 18000,
-    interval = 80,
+    maxTicks = 45000,
+    interval = 200,
     policy = dispatcherPolicy,
     timeoutMs = 3000,
     signal,
@@ -224,7 +224,7 @@ export async function runAgent(
     maxTicks > MAX_TICKS ||
     !Number.isInteger(interval) ||
     interval < 1 ||
-    interval > 600
+    interval > 1500
   )
     throw new Error('非法运行参数');
   const session = new Session(options);

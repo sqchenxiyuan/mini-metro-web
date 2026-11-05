@@ -120,7 +120,7 @@ export interface Train {
   moveTo: { line: number; station: number } | null;
 }
 export interface State {
-  version: 'orchard-metro.rules.3';
+  version: 'orchard-metro.rules.4';
   seed: number;
   rng: number;
   tick: number;
@@ -187,7 +187,7 @@ export interface Checkpoint {
   hash: string;
 }
 export interface Replay {
-  format: 'orchard-metro.replay.v3';
+  format: 'orchard-metro.replay.v4';
   createdAt: string;
   options: Required<Options>;
   duration: number;

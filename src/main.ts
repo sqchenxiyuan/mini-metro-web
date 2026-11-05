@@ -603,7 +603,7 @@ function update(): void {
       n: p.queue.filter((v) => v.shape === shape).length,
     })).filter((x) => x.n);
     $('station-detail').innerHTML =
-      `<span class="eyebrow">STATION ${p.id.toString().padStart(2, '0')}</span><h3>${GLYPHS[p.shape]} ${p.interchange ? '换乘枢纽' : '小镇车站'}</h3><div class="station-stats"><b>${p.queue.length}<small> / ${stationCapacity(p)} 人候车</small></b><span>${p.crowd ? `拥挤 ${Math.ceil(p.crowd / 20)} 秒` : '秩序良好'}</span></div><p>${destinations.map((v) => `${GLYPHS[v.shape]} × ${v.n}`).join('　') || '还没有等候乘客'}</p><div class="button-pair"><button id="upgrade-station">扩建枢纽</button><button id="remove-station">移出所选线</button></div>${s.mode === 'creative' ? creativeStationPicker() : ''}`;
+      `<span class="eyebrow">STATION ${p.id.toString().padStart(2, '0')}</span><h3>${GLYPHS[p.shape]} ${p.interchange ? '换乘枢纽' : '小镇车站'}</h3><div class="station-stats"><b>${p.queue.length}<small> / ${stationCapacity(p)} 人候车</small></b><span>${p.crowd ? `拥挤 ${Math.ceil(p.crowd / RULES.hz)} 秒` : '秩序良好'}</span></div><p>${destinations.map((v) => `${GLYPHS[v.shape]} × ${v.n}`).join('　') || '还没有等候乘客'}</p><div class="button-pair"><button id="upgrade-station">扩建枢纽</button><button id="remove-station">移出所选线</button></div>${s.mode === 'creative' ? creativeStationPicker() : ''}`;
   }
   if (s.mode === 'creative' && !p && detailKey !== 'creative') {
     detailKey = 'creative';
@@ -800,7 +800,7 @@ function refreshHistory(): void {
     history()
       .map(
         (item, i) =>
-          `<button class="history-row" data-history="${i}" ${item.replay.format !== 'orchard-metro.replay.v3' ? 'disabled title="旧版录像与新版规则不兼容"' : ''}><span>↺ ${escape(item.name)}${item.replay.format !== 'orchard-metro.replay.v3' ? ' · 旧版不可回放' : ''}</span><small>${escape(item.replay.createdAt.slice(0, 16).replace('T', ' '))}</small></button>`,
+          `<button class="history-row" data-history="${i}" ${item.replay.format !== 'orchard-metro.replay.v4' ? 'disabled title="旧版录像与新版规则不兼容"' : ''}><span>↺ ${escape(item.name)}${item.replay.format !== 'orchard-metro.replay.v4' ? ' · 旧版不可回放' : ''}</span><small>${escape(item.replay.createdAt.slice(0, 16).replace('T', ' '))}</small></button>`,
       )
       .join('') || '<p class="muted">暂时没有保存的旅程。</p>';
 }
@@ -866,8 +866,8 @@ function seekBy(ticks: number): void {
     toast(String(e));
   }
 }
-$('step-back').onclick = () => seekBy(-100);
-$('step-forward').onclick = () => seekBy(100);
+$('step-back').onclick = () => seekBy(-5 * RULES.hz);
+$('step-forward').onclick = () => seekBy(5 * RULES.hz);
 $('decisions-earlier').onclick = () => {
   decisionPage = Math.max(
     0,

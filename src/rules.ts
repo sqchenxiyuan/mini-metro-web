@@ -15,12 +15,12 @@ import type {
 } from './types';
 
 export const RULES = Object.freeze({
-  hz: 20,
-  dayTicks: 240,
-  weekTicks: 1680,
+  hz: 50,
+  dayTicks: 600,
+  weekTicks: 4200,
   capacity: 6,
   crowdLimit: 6,
-  crowdTicks: 900,
+  crowdTicks: 2250,
   speed: 2.9,
   maxStations: 48,
   maxLines: 7,
@@ -187,7 +187,7 @@ function addStation(s: State, x: number, y: number, shape: Shape): Station {
     crowd: 0,
     interchange: false,
     born: s.elapsed,
-    nextPassenger: s.elapsed + 80 + Math.floor(random(s) * 100),
+    nextPassenger: s.elapsed + 200 + Math.floor(random(s) * 250),
   };
   s.stations.push(p);
   return p;
@@ -205,7 +205,7 @@ export function createState(options: Options = {}): State {
   )
     throw new Error('非法开局参数');
   const s: State = {
-    version: 'orchard-metro.rules.3',
+    version: 'orchard-metro.rules.4',
     seed,
     rng: seed || 1,
     tick: 0,
@@ -218,7 +218,7 @@ export function createState(options: Options = {}): State {
     totalSpawned: 0,
     totalWait: 0,
     nextId: 1,
-    nextStation: 420,
+    nextStation: 1050,
     stations: [],
     lines: [],
     trains: [],
@@ -309,7 +309,7 @@ function newTrain(s: State, line: Line, at = line.stops[0], direction: 1 | -1 = 
     to: null,
     progress: 0,
     direction,
-    dwell: 1,
+    dwell: 3,
     serviceTicks: 0,
     transfer: null,
     passengers: [],
@@ -553,14 +553,14 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): numb
     if (passenger.shape === p.shape) {
       t.passengers.splice(i, 1);
       t.transfer = { passenger, direction: 'alight', stationId: p.id,
-        duration: p.interchange ? 1 : 2, progress: 0 };
+        duration: p.interchange ? 4 : 6, progress: 0 };
       return 1;
     }
     const r = route(passenger.shape, t.line);
     if (r && r.line === t.line && r.next === next) continue;
     t.passengers.splice(i, 1);
     t.transfer = { passenger, direction: 'alight', stationId: p.id,
-      duration: p.interchange ? 1 : 2, progress: 0 };
+      duration: p.interchange ? 4 : 6, progress: 0 };
     return 1;
   }
   if (t.passengers.length >= RULES.capacity * (1 + t.carriages)) return 0;
@@ -570,7 +570,7 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): numb
     if (!r || r.line !== t.line || r.next !== next) continue;
     p.queue.splice(i, 1);
     t.transfer = { passenger, direction: 'board', stationId: p.id,
-      duration: p.interchange ? 1 : 2, progress: 0 };
+      duration: p.interchange ? 4 : 6, progress: 0 };
     return 1;
   }
   return 0;
@@ -617,7 +617,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
   } : undefined;
   if (s.elapsed >= s.nextStation && s.mode !== 'creative') {
     spawnStation(s);
-    s.nextStation = s.elapsed + 340 + Math.floor(random(s) * 200);
+    s.nextStation = s.elapsed + 850 + Math.floor(random(s) * 500);
   }
   const available = [...new Set(s.stations.map((p) => p.shape))];
   for (const p of s.stations) {
@@ -629,7 +629,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
         s.totalSpawned++;
       }
       p.nextPassenger =
-        s.elapsed + Math.max(40, Math.floor((110 + random(s) * 160) / (1 + (s.week - 1) * 0.12)));
+        s.elapsed + Math.max(100, Math.floor((275 + random(s) * 400) / (1 + (s.week - 1) * 0.12)));
     }
   }
   let g: Map<number, Edge[]> | null = null;
@@ -732,10 +732,10 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
     }
     g ??= graph(s);
     if (service(s, t, next.id, g)) {
-      t.dwell = station(s, t.from).interchange ? 1 : 2;
+      t.dwell = station(s, t.from).interchange ? 3 : 5;
     } else {
       t.serviceTicks = -1;
-      t.dwell = 6;
+      t.dwell = 18;
     }
   }
   if (retired.length) s.trains = s.trains.filter((t) => !retired.includes(t.id));

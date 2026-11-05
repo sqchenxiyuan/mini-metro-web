@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Experimental, opt-in project proposals. Never substitute these for rules.1 replay generation.
+// Experimental, opt-in project proposals. Never substitute these for live replay generation.
 import type { City, MapDefinition, MapPoint, MapRun, MapSpawnEvent, Shape } from './types';
 import { distance, hash, riverCount, riverX, RULES, SHAPES } from './rules';
 
@@ -139,7 +139,7 @@ export function validateMapDefinition(d: MapDefinition): MapDefinition {
   return d;
 }
 
-const DAY_TICKS = RULES.dayTicks;
+export const MAP_DAY_TICKS = 240; // Standalone rules.2 proposal cadence; not the live RULES.hz.
 function seeded(run: MapRun): number {
   let x = run.rng;
   x ^= x << 13;
@@ -154,13 +154,13 @@ export function createMapRun(d: MapDefinition, seed: number): MapRun {
   return {
     version: d.rulesVersion, mapId: d.id, definitionHash: hash(d), seed, rng: seed || 1, tick: 0,
     stations: structuredClone(d.startStations), events: [], pending: [],
-    nextBatch: DAY_TICKS, batchIndex: 0, blocked: false,
+    nextBatch: MAP_DAY_TICKS, batchIndex: 0, blocked: false,
   };
 }
 function planBatch(run: MapRun, d: MapDefinition): void {
   const schedule = d.schedules[run.batchIndex % d.schedules.length];
   run.batchIndex++;
-  const duration = schedule.durationDays * DAY_TICKS;
+  const duration = schedule.durationDays * MAP_DAY_TICKS;
   schedule.types.forEach((shape, i) => {
     const center = (i + 1) * duration / (schedule.types.length + 1);
     const spread = duration / (schedule.types.length + 1) * schedule.randomness;
@@ -168,7 +168,7 @@ function planBatch(run: MapRun, d: MapDefinition): void {
     run.pending.push({ shape, scheduleId: schedule.id, tick, retries: 0 });
   });
   run.pending.sort((a, b) => a.tick - b.tick);
-  run.nextBatch += duration + schedule.cooldownDays * DAY_TICKS;
+  run.nextBatch += duration + schedule.cooldownDays * MAP_DAY_TICKS;
 }
 function chooseArea(run: MapRun, areas: MapDefinition['areas'], shape: Shape): MapDefinition['areas'][number] {
   const sum = areas.reduce((n, a) => n + (a.shapeWeights[shape] ?? 0), 0);
@@ -180,7 +180,7 @@ function chooseArea(run: MapRun, areas: MapDefinition['areas'], shape: Shape): M
   return areas.at(-1)!;
 }
 function spawn(run: MapRun, d: MapDefinition, item: MapRun['pending'][number]): void {
-  const day = Math.floor(run.tick / DAY_TICKS);
+  const day = Math.floor(run.tick / MAP_DAY_TICKS);
   const areas = d.areas.filter((a) => a.activeDay <= day && (a.shapeWeights[item.shape] ?? 0) > 0 &&
     run.events.filter((e) => e.result === 'spawned' && e.areaId === a.id).length < a.maximum);
   const event: MapSpawnEvent = {
@@ -209,7 +209,7 @@ function spawn(run: MapRun, d: MapDefinition, item: MapRun['pending'][number]): 
   }
   if (event.result !== 'spawned') {
     if (item.retries < d.maxRetries) {
-      run.pending.push({ ...item, retries: item.retries + 1, tick: run.tick + DAY_TICKS });
+      run.pending.push({ ...item, retries: item.retries + 1, tick: run.tick + MAP_DAY_TICKS });
     } else {
       event.result = 'blocked';
       run.blocked = true; // Explicit tuning failure, never silently switch shape or spin forever.
@@ -217,7 +217,7 @@ function spawn(run: MapRun, d: MapDefinition, item: MapRun['pending'][number]): 
   }
   run.events.push(event);
 }
-/** Advances the standalone map-v2 proposal only; does not alter the live rules.1 State. */
+/** Advances the standalone map-v2 proposal only; does not alter the live State. */
 export function advanceMapRun(run: MapRun, d: MapDefinition, ticks: number): void {
   if (run.version !== d.rulesVersion || run.mapId !== d.id || run.definitionHash !== hash(d))
     throw new Error('map definition/version mismatch');

@@ -154,7 +154,7 @@ describe('train load feedback', () => {
     state.stations[0].queue = [passenger(301, 'triangle')];
     for (const p of state.stations) p.nextPassenger = Infinity;
     renderer.render(state);
-    for (let i = 0; i < 6; i++) advance(state);
+    for (let i = 0; i < 9; i++) advance(state);
     renderer.render(state);
     expect(state.trains[0].passengers.map((p) => p.id)).toContain(301);
     expect(transfers(renderer)).toHaveLength(0);
@@ -186,6 +186,9 @@ describe('train load feedback', () => {
     advance(state);
     advance(state);
     renderer.render(state);
+    expect(state.trains[0].transfer).toMatchObject({ progress: 3, duration: 6 });
+    for (let i = 0; i < 4; i++) advance(state);
+    renderer.render(state);
     expect(state.trains[0].passengers.map((p) => p.id)).toEqual([101]);
     expect(transfers(renderer)).toHaveLength(0);
     // At the destination the authoritative alighting state starts first; score changes on completion.
@@ -200,6 +203,10 @@ describe('train load feedback', () => {
     advance(state);
     advance(state);
     advance(state);
+    renderer.render(state);
+    expect(state.score).toBe(0);
+    expect(state.trains[0].transfer).toMatchObject({ progress: 3, duration: 6 });
+    for (let i = 0; i < 4; i++) advance(state);
     renderer.render(state);
     expect(state.score).toBe(1);
     expect(transfers(renderer)).toHaveLength(0);
@@ -217,7 +224,7 @@ describe('train load feedback', () => {
     state.tick++;
     state.stations[0].queue = [];
     state.trains[0].transfer = { passenger: passenger(502, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 0 };
+      stationId: state.stations[0].id, duration: 5, progress: 0 };
     renderer.render(state);
     expect(transfers(renderer)).toHaveLength(1);
     renderer.render(state); // same tick: paused or UI redraw
@@ -238,7 +245,7 @@ describe('train load feedback', () => {
     state.tick++;
     state.stations[0].queue = [];
     state.trains[0].transfer = { passenger: passenger(505, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 0 };
+      stationId: state.stations[0].id, duration: 5, progress: 0 };
     renderer.render(state);
     const marker = transfers(renderer)[0] as THREE.Sprite;
     const texture = (marker.material as THREE.SpriteMaterial).map!;
@@ -275,7 +282,7 @@ describe('train load feedback', () => {
     state.tick++;
     first.passengers = [];
     first.transfer = { passenger: passenger(601, 'circle'), direction: 'alight',
-      stationId: state.stations[0].id, duration: 2, progress: 0 };
+      stationId: state.stations[0].id, duration: 5, progress: 0 };
     state.trains[1].passengers = [];
     renderer.render(state);
     expect(transfers(renderer).filter((sprite) => sprite.userData.direction === 'alight')).toHaveLength(1);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advanceMapRun, createMapRun, CREATIVE_SHAPES, MAP_DEFINITIONS, validateMapDefinition } from '../src/map-generation';
+import { advanceMapRun, createMapRun, CREATIVE_SHAPES, MAP_DAY_TICKS, MAP_DEFINITIONS, validateMapDefinition } from '../src/map-generation';
 import { distance, hash, riverCount, riverX, SHAPES } from '../src/rules';
 import { ReplayPlayer, Session } from '../src/session';
 import type { City, MapDefinition } from '../src/types';
@@ -9,6 +9,8 @@ const clone = <T>(value: T): T => structuredClone(value);
 
 describe('opt-in city map generator (project proposal, not original-game calibration)', () => {
   it('validates three distinct city definitions and keeps Creative ten shapes separate from each Normal city pool', () => {
+    expect(MAP_DAY_TICKS).toBe(240);
+    expect(createMapRun(MAP_DEFINITIONS.orchard, 42).nextBatch).toBe(MAP_DAY_TICKS);
     expect(CREATIVE_SHAPES).toEqual(SHAPES);
     const signatures = new Set<string>();
     for (const city of cities) {
@@ -43,8 +45,8 @@ describe('opt-in city map generator (project proposal, not original-game calibra
       const d = MAP_DEFINITIONS[city];
       const a = createMapRun(d, seed), b = createMapRun(d, seed);
       for (let day = 0; day < 45; day++) {
-        advanceMapRun(a, d, 240);
-        advanceMapRun(b, d, 240);
+        advanceMapRun(a, d, MAP_DAY_TICKS);
+        advanceMapRun(b, d, MAP_DAY_TICKS);
       }
       expect(hash(a)).toBe(hash(b));
       expect(a.events.length).toBeGreaterThan(1);
@@ -68,7 +70,7 @@ describe('opt-in city map generator (project proposal, not original-game calibra
     for (const city of cities) {
       const a = new Session({ seed: 42, city });
       const b = new Session({ seed: 42, city });
-      expect(a.getState().version).toBe('orchard-metro.rules.3');
+      expect(a.getState().version).toBe('orchard-metro.rules.4');
       expect(hash(a.getState())).toBe(hash(b.getState()));
       a.step(1000);
       b.step(1000);
@@ -96,7 +98,7 @@ describe('opt-in city map generator (project proposal, not original-game calibra
     const d = clone(MAP_DEFINITIONS.orchard);
     const run = createMapRun(d, 42);
     d.schedules[0].types[0] = 'square';
-    expect(() => advanceMapRun(run, d, 240)).toThrow(/definition|fingerprint|mismatch/i);
+    expect(() => advanceMapRun(run, d, MAP_DAY_TICKS)).toThrow(/definition|fingerprint|mismatch/i);
   });
   it('rejects areas that touch water or overlap another region', () => {
     const water = clone(MAP_DEFINITIONS.orchard);
@@ -111,8 +113,8 @@ describe('opt-in city map generator (project proposal, not original-game calibra
   it('is invariant to chunked versus single-step advancement of the same simulation ticks', () => {
     const d = MAP_DEFINITIONS.harbor;
     const a = createMapRun(d, 42), b = createMapRun(d, 42);
-    advanceMapRun(a, d, 12000);
-    for (let i = 0; i < 50; i++) advanceMapRun(b, d, 240);
+    advanceMapRun(a, d, 50 * MAP_DAY_TICKS);
+    for (let i = 0; i < 50; i++) advanceMapRun(b, d, MAP_DAY_TICKS);
     expect(hash(a)).toBe(hash(b));
   });
   it('enforces area maximum and logs exhausted area instead of changing shape', () => {
@@ -123,7 +125,7 @@ describe('opt-in city map generator (project proposal, not original-game calibra
     d.areas[0].shapeWeights = { circle: 1 };
     d.maxRetries = 0;
     const run = createMapRun(d, 12);
-    advanceMapRun(run, d, 1600);
+    advanceMapRun(run, d, 4000);
     expect(run.events.some((e) => e.result === 'spawned')).toBe(true);
     expect(run.events.at(-1)?.reason).toBe('maximum');
     expect(run.events.at(-1)?.result).toBe('blocked');

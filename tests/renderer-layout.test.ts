@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { LINE_COLORS, createState } from '../src/rules';
+import { LINE_COLORS, RULES, createState } from '../src/rules';
 import * as layoutModule from '../src/track-layout';
 import { MetroRenderer } from '../src/renderer';
 
@@ -53,18 +53,18 @@ function trackColors(renderer: MetroRenderer) {
 describe('automatic camera framing', () => {
   it('widens before the scheduled spawn so even an edge station appears inside the view without a spawn-time snap', () => {
     const { renderer, state } = setup();
-    state.nextStation = 1680;
+    state.nextStation = RULES.weekTicks;
     const frame = () => (renderer as unknown as { frameSize: { width: number; height: number } }).frameSize.width;
     renderer.render(state);
     const start = frame();
-    state.elapsed = state.nextStation - 120;
+    state.elapsed = state.nextStation - 300;
     renderer.render(state);
     const middle = frame();
     state.elapsed = state.nextStation - 1;
     renderer.render(state);
     const before = frame();
     const centerBefore = { ...(renderer as unknown as { center: { x: number; y: number } }).center };
-    const edge = { x: 15.5 * (0.48 + state.nextStation / 1680 * 0.12), y: 9.3 * (0.48 + state.nextStation / 1680 * 0.12) };
+    const edge = { x: 15.5 * (0.48 + state.nextStation / RULES.weekTicks * 0.12), y: 9.3 * (0.48 + state.nextStation / RULES.weekTicks * 0.12) };
     const projected = renderer.project(edge.x, edge.y);
     expect(middle).toBeGreaterThan(start);
     expect(before).toBeGreaterThan(middle);
@@ -73,7 +73,7 @@ describe('automatic camera framing', () => {
     expect(projected.y).toBeGreaterThan(0);
     expect(projected.y).toBeLessThan(800);
     state.elapsed = state.nextStation;
-    state.nextStation += 400;
+    state.nextStation += 1000;
     state.stations.push({ ...state.stations[0], id: 900, ...edge, queue: [] });
     renderer.render(state);
     expect(Math.abs(frame() - before)).toBeLessThan(0.25);
@@ -83,11 +83,11 @@ describe('automatic camera framing', () => {
   });
   it('updates projection without reallocating the WebGL drawing buffer during the lead-in', () => {
     const { renderer, state } = setup();
-    state.nextStation = 1680;
+    state.nextStation = RULES.weekTicks;
     renderer.render(state);
     const webgl = (renderer as unknown as { renderer: { setSize: ReturnType<typeof vi.fn> } }).renderer;
     webgl.setSize.mockClear();
-    for (const tick of [state.nextStation - 180, state.nextStation - 120, state.nextStation - 60]) {
+    for (const tick of [state.nextStation - 450, state.nextStation - 300, state.nextStation - 150]) {
       state.elapsed = tick;
       renderer.render(state);
     }
@@ -107,7 +107,7 @@ describe('automatic camera framing', () => {
   });
   it('restores the opening field of view for a new game after an expanded late game', () => {
     const { renderer, state } = setup();
-    state.nextStation = 1680;
+    state.nextStation = RULES.weekTicks;
     renderer.render(state);
     state.elapsed = state.nextStation - 1;
     renderer.render(state);
@@ -124,11 +124,11 @@ describe('automatic camera framing', () => {
     const container = { append: vi.fn(), getBoundingClientRect: () => ({ width: 390, height: 708 }) };
     const renderer = new MetroRenderer(container as unknown as HTMLElement);
     const state = createState();
-    state.nextStation = 1680;
+    state.nextStation = RULES.weekTicks;
     renderer.render(state);
     state.elapsed = state.nextStation - 1;
     renderer.render(state);
-    const range = 0.48 + (state.nextStation / 1680) * 0.12;
+    const range = 0.48 + (state.nextStation / RULES.weekTicks) * 0.12;
     for (const x of [-15.5 * range, 15.5 * range])
       for (const y of [-9.3 * range, 9.3 * range]) {
         const p = renderer.project(x, y);
@@ -179,7 +179,7 @@ describe('render cache and replay state boundaries', () => {
     renderer.pan(30, 12);
     const before = { frame: { ...(renderer as unknown as { frameSize: { width: number; height: number } }).frameSize },
       center: { ...(renderer as unknown as { center: { x: number; y: number } }).center } };
-    state.tick = 1200;
+    state.tick = 3000;
     renderer.render(state);
     state.tick = 0;
     renderer.render(state);
@@ -190,10 +190,10 @@ describe('render cache and replay state boundaries', () => {
   });
   it('restores automatic opening framing on a backward replay seek', () => {
     const { renderer, state } = setup();
-    state.nextStation = 1680;
+    state.nextStation = RULES.weekTicks;
     renderer.render(state);
     const opening = { ...(renderer as unknown as { frameSize: { width: number; height: number } }).frameSize };
-    state.tick = 1200;
+    state.tick = 3000;
     state.elapsed = state.nextStation - 1;
     renderer.render(state);
     const expanded = (renderer as unknown as { frameSize: { width: number; height: number } }).frameSize;

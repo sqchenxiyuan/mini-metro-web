@@ -35,7 +35,7 @@ import assert from 'node:assert/strict';
 Object.defineProperty(globalThis,'document',{get(){throw new Error('DOM touched by SDK');}});
 const {createSession,dispatcherPolicy,ReplayPlayer,hash}=await import('@snack-lab/orchard-metro');
 const s=createSession({seed:421});
-for(let i=0;i<60;i++){s.submit(dispatcherPolicy(s.observe()));s.step(80);if(s.getState().phase==='over')break;}
+for(let i=0;i<60;i++){s.submit(dispatcherPolicy(s.observe()));s.step(200);if(s.getState().phase==='over')break;}
 const replay=s.exportReplay(),player=new ReplayPlayer(replay);
 assert.equal(hash(player.getState()),hash(s.getState()));
 assert.equal(hash(player.observationAtDecision(0).state),replay.decisions[0].observationHash);
@@ -56,8 +56,8 @@ import {createSession,runAgent,ReplayPlayer,type Policy} from '@snack-lab/orchar
 const session=createSession({seed:421});
 const policy:Policy=async (obs,signal)=>({action:{type:'wait'},reason:String(obs.tick)+signal.aborted});
 session.submit(await policy(session.observe(),new AbortController().signal));
-const result=await runAgent({policy,maxTicks:80});
-new ReplayPlayer(result.replay).seek(80);
+const result=await runAgent({policy,maxTicks:200});
+new ReplayPlayer(result.replay).seek(200);
 `,
 );
 execFileSync(

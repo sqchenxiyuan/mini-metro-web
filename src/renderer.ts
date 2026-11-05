@@ -629,7 +629,7 @@ export class MetroRenderer {
       }
       // Expand ahead of the station spawn, never jump or shrink at arrival.
       // The rule generator uses this bounded envelope; the actual point stays unknown.
-      const phase = Math.max(0, Math.min(1, 1 - (s.nextStation - s.elapsed) / 240));
+      const phase = Math.max(0, Math.min(1, 1 - (s.nextStation - s.elapsed) / (12 * RULES.hz)));
       const cx = this.cameraCenterStart.x + (this.cameraCenterTarget.x - this.cameraCenterStart.x) * phase;
       const cy = this.cameraCenterStart.y + (this.cameraCenterTarget.y - this.cameraCenterStart.y) * phase;
       if (cx !== this.center.x || cy !== this.center.y) {

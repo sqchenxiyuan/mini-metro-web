@@ -28,11 +28,11 @@ Agent 接口的观察字段、动作、HTTP 示例和内部状态边界见 [AGEN
 
 十种 Workshop 文档支持的车站形状已可在创意模式手动选择，目的地、渲染与回放也支持这些形状。普通/无尽/极限的自动扩站仍使用本版旧规则，只会生成其中六种；原版各城市的特殊形状池、生成时序与替换行为尚未对照或实现。该增加不表示已实现与原版的城市级生成一致性。
 
-界面名称为「小小地铁 / Little Metro」。为兼容已有脚本、存档与录像，包名、协议、地图键 `orchard` 和发布文件名继续沿用原技术标识 `orchard-metro`。
+界面名称为「小小地铁 / Little Metro」。包名、协议和地图键 `orchard` 沿用原技术标识 `orchard-metro`；本次节拍迁移将规则升为 `rules.4`、录像升为 `replay.v4`，旧录像不可直接导入。
 
 `npm run test:browser` 需先运行 `npm run build` 和本地预览服务；`PLAYWRIGHT_BROWSERS_PATH` 可用于容器中的浏览器缓存。`PLAYWRIGHT_BROWSERS_PATH=… node scripts/ui-verify.mjs` 验收地图优先的桌面/手机 UI、错误提示与同种子重试；`VITE_BASE_PATH=/mini-metro-web/ npm run build` 后运行 `node scripts/pages-verify.mjs` 验证 Pages 子路径下字体及所有静态资源加载。局中中文使用随站点自托管的 Noto Sans SC 字体，许可证见 `public/fonts/OFL.txt` 和 `NOTICE.md`。
 
-**首版地图边界：** `src/map-generation.ts` 提供独立、可验证的城市区域/站型池/日程原型及种子事件记录；它是尚未接入线上游戏的 opt-in `rules.2` 提案。线上游玩仍沿用 `rules.1` 的三张原创城统一扩站器，以保持旧录像哈希/兼容性；城市原版参数、真实特殊站替换规则和 `rules.2` 游戏/回放集成仍待原版实机差分。不要把地图原型测试通过写成已上线的城市级生成。
+**首版地图边界：** `src/map-generation.ts` 提供独立、可验证的城市区域/站型池/日程原型及种子事件记录；它仍是未接入线上游戏的 opt-in `rules.2` 提案，以原有 240 tick/日独立运行，和当前游戏的 `rules.4` 互不兼容。线上游玩仍使用统一扩站器；城市原版参数及特殊站替换规则尚未做原版实机对照。不要把地图原型测试通过写成已上线的城市级生成。
 
 ## GitHub Pages 部署
 
@@ -48,7 +48,7 @@ Pages 构建通过 `VITE_BASE_PATH=/mini-metro-web/` 指定仓库子路径；本
 import { createSession, ReplayPlayer, dispatcherPolicy, hash } from './dist-sdk/index.mjs';
 const game = createSession({ seed: 420, city: 'orchard', mode: 'normal' });
 game.submit({ action: { type: 'route', line: 0, stops: [1, 2, 3] }, reason: '连接三种基础形状' });
-game.step(200); // 20 Hz，推进 10 秒；补给和失败时停住
+game.step(500); // 50 Hz，推进 10 秒；补给和失败时停住
 const observation = game.observe();
 game.submit(dispatcherPolicy(observation), 'baseline');
 const replay = game.exportReplay();
@@ -73,7 +73,7 @@ HTTP 请求使用 AbortSignal，最多 64 KiB 响应。浏览器等待 Agent 时
 
 ## 回放语义
 
-固定 20 Hz、种子随机数、严格顺序动作。决策包括操作前观察哈希、操作后状态哈希、控制器来源、公开说明、候选得分、耗时、实际执行结果和错误。`step` 只推进模拟；暂停/倍速属于宿主播放设置，不改游戏状态。
+固定 50 Hz、种子随机数、严格顺序动作。决策包括操作前观察哈希、操作后状态哈希、控制器来源、公开说明、候选得分、耗时、实际执行结果和错误。`step` 只推进模拟；暂停/倍速属于宿主播放设置，不改游戏状态。
 
 导入对所有动作、阶段切换、检查点及最终状态重新模拟；不信任录像里携带的状态。`seek(tick)` 表示该 tick 所有已录动作之后，`observationAtDecision(index)` 表示指定动作之前。回放不再调用任何 Agent。哈希用于确定性校验，不是密码学签名。JSON 导入上限 32 MiB / 50,000 条决策 / 6 小时。
 

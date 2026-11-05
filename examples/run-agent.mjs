@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { runAgent, ReplayPlayer, hash } from '../dist-sdk/index.mjs';
+import { runAgent, ReplayPlayer, hash, RULES } from '../dist-sdk/index.mjs';
 const seed = Number(process.argv[2] ?? 420),
-  maxTicks = Number(process.argv[3] ?? 24000);
+  maxTicks = Number(process.argv[3] ?? 20 * 60 * RULES.hz);
 const result = await runAgent({ seed, maxTicks });
 const player = new ReplayPlayer(result.replay),
   state = player.seek(result.replay.duration);

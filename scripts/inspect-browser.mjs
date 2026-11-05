@@ -1,5 +1,6 @@
 import { chromium } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
+import { RULES } from '../dist-sdk/index.mjs';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const page = await browser.newPage({
   viewport: { width: 1600, height: 1000 },
@@ -30,14 +31,14 @@ console.log(
     tick: window.metro.getState().tick,
   })),
 );
-await page.evaluate(async () => {
+await page.evaluate(async (hz) => {
   const { dispatcherPolicy } = await import('/src/agent.ts');
   window.metro.pause();
   for (let i = 0; i < 36; i++) {
     window.metro.submit(dispatcherPolicy(window.metro.observe()), 'screenshot-demo');
-    window.metro.step(80);
+    window.metro.step(4 * hz);
   }
-});
+}, RULES.hz);
 await page.waitForTimeout(500);
 await page.screenshot({ path: 'test-results/town.png', fullPage: true });
 console.log(

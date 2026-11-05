@@ -8,6 +8,7 @@ import {
   hash,
   RULES,
   station,
+  trackLength,
   trackPoints,
   trackPosition,
   tunnelsUsed,
@@ -37,6 +38,31 @@ function population(s: State): number {
 }
 
 describe('transport rules', () => {
+  it('runs at 50 ticks per real second while preserving day, week, crowd and speed durations', () => {
+    expect(RULES.hz).toBe(50);
+    expect(RULES.dayTicks / RULES.hz).toBe(12);
+    expect(RULES.weekTicks / RULES.hz).toBe(84);
+    expect(RULES.crowdTicks / RULES.hz).toBe(45);
+    const s = createState({ seed: 42 });
+    expect(s.nextStation / RULES.hz).toBe(21);
+    expect(s.stations[0].nextPassenger / RULES.hz).toBeGreaterThanOrEqual(4);
+    const start = station(s, 1).nextPassenger;
+    expect(start / RULES.hz).toBeLessThan(9);
+    applyAction(s, { type: 'route', line: 0, stops: [1, 2] });
+    const t = s.trains[0]; t.dwell = 0;
+    for (let i = 0; i < 23; i++) advance(s);
+    expect(t.to).toBe(2);
+    const a = station(s, 1), b = station(s, 2);
+    const duration = trackLength(a, b) / RULES.speed;
+    const tickCount = Math.ceil(trackLength(a, b) / (RULES.speed / RULES.hz));
+    expect(Math.abs(tickCount / RULES.hz - duration)).toBeLessThanOrEqual(1 / RULES.hz);
+  });
+  it('uses a new replay/rules version when tick cadence changes', () => {
+    const s = new Session({ seed: 42 });
+    expect(s.getState().version).toBe('orchard-metro.rules.4');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v4');
+    expect(() => new ReplayPlayer({ ...s.exportReplay(), format: 'orchard-metro.replay.v3' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
+  });
   it('uses the same octilinear track in both travel directions', () => {
     const a = { x: -3, y: -3 },
       b = { x: 3, y: 2 };
@@ -52,8 +78,8 @@ describe('transport rules', () => {
     const a = createState({ seed: 42 }),
       b = createState({ seed: 42 });
     expect(a.stations.map((p) => p.shape)).toEqual(['circle', 'triangle', 'square']);
-    ticks(a, 1000);
-    ticks(b, 1000);
+    ticks(a, 2500);
+    ticks(b, 2500);
     expect(hash(a)).toBe(hash(b));
     expect(a.stations.length).toBeGreaterThan(3);
     expect(a.resources.locomotives).toBe(3);
@@ -104,7 +130,7 @@ describe('transport rules', () => {
     a.queue.push(p);
     advance(s);
     expect(forward.transfer?.passenger.id).toBe(p.id);
-    ticks(s, 3);
+    ticks(s, 7);
     expect(forward.passengers.map((r) => r.id)).toContain(p.id);
   });
   it('boards a rider toward the next stop on a one-way loop even when reverse is geographically shorter', () => {
@@ -119,7 +145,7 @@ describe('transport rules', () => {
     a.queue.push(p);
     advance(s);
     expect(t.transfer?.passenger.id).toBe(p.id);
-    ticks(s, 3);
+    ticks(s, 7);
     expect(t.passengers.map((r) => r.id)).toContain(p.id);
   });
   it('does not board unreachable destinations or serve lines without locomotives', () => {
@@ -138,13 +164,13 @@ describe('transport rules', () => {
     s.resources.tunnels = 8;
     applyAction(s, { type: 'route', line: 0, stops: [1, 2, 3], loop: true });
     const seen = new Set<number>();
-    for (let i = 0; i < 450; i++) {
+    for (let i = 0; i < 1125; i++) {
       advance(s);
       seen.add(s.trains[0].from);
     }
     expect([...seen].sort()).toEqual([1, 2, 3]);
     applyAction(s, { type: 'route', line: 0, stops: [1, 2, 3], loop: false });
-    ticks(s, 350);
+    ticks(s, 875);
     expect([1, -1]).toContain(s.trains[0].direction);
   });
   it('keeps a deleted tunnel occupied until its moving train arrives and preserves passengers', () => {
@@ -154,13 +180,13 @@ describe('transport rules', () => {
     t.dwell = 0;
     station(s, 1).queue = Array.from({ length: 5 }, () => passenger(s, 'square'));
     s.totalSpawned = 5;
-    ticks(s, 38);
+    ticks(s, 95);
     expect(t.to).toBe(3);
     expect(t.passengers).toHaveLength(5);
     applyAction(s, { type: 'route', line: 0, stops: [] });
     expect(tunnelsUsed(s)).toBe(1);
     expect(s.resources.locomotives).toBe(2);
-    ticks(s, 200);
+    ticks(s, 500);
     expect(tunnelsUsed(s)).toBe(0);
     expect(s.trains).toHaveLength(0);
     expect(s.resources.locomotives).toBe(3);
@@ -175,7 +201,7 @@ describe('transport rules', () => {
     station(s, 1).queue = Array.from({ length: 14 }, () => passenger(s, 'triangle'));
     advance(s);
     expect(t.transfer).toMatchObject({ direction: 'board', progress: 0 });
-    ticks(s, 25);
+    ticks(s, 60);
     expect(t.passengers).toHaveLength(6);
     expect(station(s, 1).queue).toHaveLength(8);
     s.resources.carriages = 1;
@@ -190,12 +216,12 @@ describe('transport rules', () => {
     const t = s.trains[0];
     t.dwell = 0;
     station(s, 1).queue = [passenger(s, 'square')];
-    ticks(s, 10);
+    ticks(s, 25);
     const from = t.from;
     applyAction(s, { type: 'moveTrain', train: t.id, line: 1, station: 3 });
     expect(t.from).toBe(from);
     expect(t.line).toBe(0);
-    ticks(s, 60);
+    ticks(s, 150);
     expect(t.line).toBe(1);
     expect(population(s)).toBe(1);
   });
@@ -209,7 +235,7 @@ describe('transport rules', () => {
     ticks(s, 20);
     expect(p.crowd).toBe(60);
     p.queue.push(passenger(s, 'square'));
-    ticks(s, 840);
+    ticks(s, RULES.crowdTicks - 60);
     expect(s.phase).toBe('over');
     expect(s.lostStation).toBe(p.id);
   });
@@ -231,7 +257,7 @@ describe('transport rules', () => {
     const [a, b] = session.getState().stations;
     expect(session.submit({ action: { type: 'route', line: 0, stops: [a.id, b.id] } }).ok).toBe(true);
     // Use natural spawning to ensure the rider and its route are recorded deterministically.
-    for (let i = 0; i < 1200 && !session.getState().trains.some((t) => t.transfer); i++) session.step(1);
+    for (let i = 0; i < 3000 && !session.getState().trains.some((t) => t.transfer); i++) session.step(1);
     const snapshot = session.getState();
     expect(snapshot.trains.some((t) => t.transfer)).toBe(true);
     const replay = session.exportReplay();
@@ -240,14 +266,14 @@ describe('transport rules', () => {
   });
   it('rejects old rules-2 replays instead of silently applying changed transfer timing', () => {
     const session = new Session({ seed: 13 });
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v3');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v4');
     const old = { ...session.exportReplay(), format: 'orchard-metro.replay.v2' };
     expect(() => new ReplayPlayer(old as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('rejects an old rules-1 replay after the boarding rules change', () => {
     const s = new Session({ seed: 13 });
-    expect(s.getState().version).toBe('orchard-metro.rules.3');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v3');
+    expect(s.getState().version).toBe('orchard-metro.rules.4');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v4');
     const legacy = { ...s.exportReplay(), format: 'orchard-metro.replay.v1' };
     expect(() => new ReplayPlayer(legacy as unknown as import('../src/types').Replay)).toThrow();
   });
@@ -255,7 +281,7 @@ describe('transport rules', () => {
     const s = quiet();
     s.mode = 'endless';
     s.stations[0].queue = Array.from({ length: 7 }, () => passenger(s, 'square'));
-    ticks(s, 1000);
+    ticks(s, 2500);
     expect(s.phase).toBe('playing');
     s.mode = 'extreme';
     applyAction(s, { type: 'route', line: 0, stops: [1, 2] });
@@ -267,8 +293,8 @@ describe('transport rules', () => {
   });
   it('conserves all generated passengers throughout a baseline game', () => {
     const s = createState({ seed: 420 });
-    for (let i = 0; i < 5000 && s.phase !== 'over'; i++) {
-      if (i % 80 === 0 || s.phase === 'upgrade')
+    for (let i = 0; i < 12500 && s.phase !== 'over'; i++) {
+      if (i % 200 === 0 || s.phase === 'upgrade')
         applyAction(
           s,
           dispatcherPolicy({
@@ -279,7 +305,7 @@ describe('transport rules', () => {
               freeTunnels: s.resources.tunnels - tunnelsUsed(s),
               trainCapacity: 6,
               crowdLimit: 6,
-              tickSeconds: 0.05,
+              tickSeconds: 1 / RULES.hz,
             },
           }).action,
         );
@@ -313,7 +339,7 @@ describe('recording, re-simulation and agent boundaries', () => {
   it('rejects modified actions, observations, checkpoints, final hashes and versions', () => {
     const game = new Session();
     game.submit({ action: { type: 'route', line: 0, stops: [1, 2, 3] } });
-    game.step(650);
+    game.step(1600);
     const r = game.exportReplay();
     for (const change of [
       (r: ReturnType<Session['exportReplay']>) => {
@@ -383,6 +409,6 @@ describe('recording, re-simulation and agent boundaries', () => {
       policy: () => ({ action: { type: 'wait' } }),
     });
     expect(run.reason).toBe('waiting-for-upgrade');
-    expect(run.replay.duration).toBe(1680);
+    expect(run.replay.duration).toBe(RULES.weekTicks);
   });
 });

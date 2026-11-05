@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
-import { runAgent, ReplayPlayer } from '../dist-sdk/index.mjs';
+import { runAgent, ReplayPlayer, RULES } from '../dist-sdk/index.mjs';
 import { browserLaunchOptions } from './browser-launch.mjs';
 
 const output = 'test-results/full-train-ui';
@@ -13,7 +13,7 @@ const browser = await chromium.launch(browserLaunchOptions());
 const checked = [];
 try {
   for (const [city, seed] of [['orchard', 42], ['islands', 420]]) {
-    const run = await runAgent({ city, seed, maxTicks: 16000 });
+    const run = await runAgent({ city, seed, maxTicks: 800 * RULES.hz });
     assert.equal(run.reason, 'over');
     assert.equal(run.errors, 0);
     const player = new ReplayPlayer(run.replay);
@@ -35,10 +35,24 @@ try {
       assert.equal(await page.locator('#inspector').isVisible(), false);
       const badge = page.locator(`[data-train-id="${full.id}"]`);
       const rect = await badge.boundingBox();
+      if (!rect) {
+        const station = (await page.evaluate((id) => window.metro.getState().trains.find((t) => t.id === id), full.id)).from;
+        const group = page.locator(`[data-train-group="${station}"]`);
+        assert.equal(await group.count(), 1, 'hidden individual badge must belong to a visible group');
+        await group.click();
+        await page.locator(`[data-train-choice="${full.id}"]`).click();
+        assert.match(await page.locator('#train-detail').innerText(), new RegExp(`${full.count}/${full.capacity}`));
+        const screenshot = `${output}/${city}-${seed}-${width}-full.png`;
+        await page.screenshot({ path: screenshot, fullPage: true });
+        checked.push({ city, seed, width, tick: full.tick, grouped: true, screenshot });
+        await page.close();
+        continue;
+      }
       assert.ok(rect, 'full train has an on-map badge');
       assert.ok(rect.width <= 86, `${city} ${width}px full badge stretched to ${rect.width}px`);
       assert.ok(rect.height <= 50, `${city} ${width}px full badge too tall: ${rect.height}px`);
-      assert.match(await badge.innerText(), new RegExp(`^${full.count}/${full.capacity}$`));
+      assert.match(await badge.getAttribute('aria-label'), new RegExp(`${full.count}/${full.capacity}`));
+      assert.doesNotMatch(await badge.innerText(), /\d|×/);
       assert.deepEqual(errors, [], 'no page errors');
       const screenshot = `${output}/${city}-${seed}-${width}-full.png`;
       await page.screenshot({ path: screenshot, fullPage: true });

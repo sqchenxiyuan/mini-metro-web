@@ -3,21 +3,12 @@ import { browserLaunchOptions } from './browser-launch.mjs';
 import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import {
-  runAgent,
-  ReplayPlayer,
-  dispatcherPolicy,
-  createHttpAgent,
-  decide,
-  createSession,
-  hash,
-  trackPoints,
-} from '../dist-sdk/index.mjs';
+import { runAgent, ReplayPlayer, dispatcherPolicy, createHttpAgent, decide, createSession, hash, trackPoints, RULES } from '../dist-sdk/index.mjs';
 
 const output = 'test-results/production';
 await mkdir(output, { recursive: true });
 const host = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:4175';
-const complete = await runAgent({ seed: 420, maxTicks: 24000 });
+const complete = await runAgent({ seed: 420, maxTicks: RULES.hz * 1200 });
 assert.equal(complete.reason, 'over');
 assert.equal(complete.errors, 0);
 await writeFile(`${output}/node-agent.json`, JSON.stringify(complete.replay));
@@ -99,11 +90,11 @@ try {
   await page.click('#add-train');
   assert.equal(await page.evaluate(() => window.metro.getState().trains.length), 2);
   await page.click('#line-tools-close');
-  await page.evaluate(() => window.metro.step(1680));
+  await page.evaluate((ticks) => window.metro.step(ticks), RULES.weekTicks);
   assert.equal(await page.evaluate(() => window.metro.getState().phase), 'upgrade');
   await page.locator('[data-upgrade]').first().click();
   assert.equal(await page.evaluate(() => window.metro.getState().phase), 'playing');
-  await page.evaluate(() => window.metro.step(60));
+  await page.evaluate((ticks) => window.metro.step(ticks), 3 * RULES.hz);
   const browserReplay = await page.evaluate(() => window.metro.exportReplay());
   await writeFile(`${output}/browser-recording.json`, JSON.stringify(browserReplay));
   const browserInNode = new ReplayPlayer(browserReplay);
@@ -121,11 +112,15 @@ try {
   );
   await page.locator('#import-file').setInputFiles(`${output}/browser-recording.json`);
   await page.waitForFunction(() => window.metro.controller.mode === 'replay');
-  await page.waitForFunction(() => Number(document.querySelector('#timeline')?.max) >= 600);
-  await page.locator('#timeline').fill('600');
-  await page.waitForFunction(() => window.metro.getState().tick === 600);
-  assert.equal(await page.locator('#timeline').inputValue(), '600');
-  assert.equal(await page.evaluate(() => window.metro.getState().tick), 600);
+  await page.waitForFunction((tick) => Number(document.querySelector('#timeline')?.max) >= tick, 30 * RULES.hz);
+  await page.locator('#timeline').fill(String(30 * RULES.hz));
+  await page.waitForFunction((tick) => window.metro.getState().tick === tick, 30 * RULES.hz);
+  await page.click('#step-forward');
+  assert.equal(await page.evaluate(() => window.metro.getState().tick), 35 * RULES.hz);
+  await page.click('#step-back');
+  assert.equal(await page.evaluate(() => window.metro.getState().tick), 30 * RULES.hz);
+  assert.equal(await page.locator('#timeline').inputValue(), String(30 * RULES.hz));
+  assert.equal(await page.evaluate(() => window.metro.getState().tick), 30 * RULES.hz);
   await page.locator('#decision-list [data-decision="0"]').click();
   await page.locator('#jump-decision').click();
   assert.equal(
@@ -146,14 +141,14 @@ try {
   await page.click('#decisions-later');
   const snapshots = await page.evaluate(() => {
     const g = window.metro;
-    g.seek(3000);
+    g.seek(150 * 50);
     const first = g.hash();
-    g.seek(1000);
-    g.seek(3000);
+    g.seek(50 * 50);
+    g.seek(150 * 50);
     return [first, g.hash()];
   });
   assert.equal(snapshots[0], snapshots[1]);
-  await page.evaluate(() => window.metro.seek(4900));
+  await page.evaluate((tick) => window.metro.seek(tick), 245 * RULES.hz);
   await page.click('#tab-dispatch');
   await page.click('#agent-observation');
   const wire = JSON.parse(await page.locator('#observation-json').textContent());
@@ -191,7 +186,7 @@ try {
   // Real HTTP round trip in both Node and Chrome.
   const http = await runAgent({
     seed: 420,
-    maxTicks: 600,
+    maxTicks: 30 * RULES.hz,
     policy: createHttpAgent(`${agentUrl}/ok`),
   });
   assert.equal(http.errors, 0);

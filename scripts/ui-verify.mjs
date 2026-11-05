@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
 import { browserLaunchOptions } from './browser-launch.mjs';
-import { runAgent } from '../dist-sdk/index.mjs';
+import { runAgent, RULES } from '../dist-sdk/index.mjs';
 
 const output = 'test-results/ui';
 await mkdir(output, { recursive: true });
@@ -45,7 +45,7 @@ try {
   assert.equal(await page.evaluate(() => window.metro.controller.paused), false);
   await page.click('[data-speed="2"]');
   assert.equal(await page.locator('[data-speed="2"]').getAttribute('aria-pressed'), 'true');
-  const completed = await runAgent({ seed: 420, maxTicks: 24000 });
+  const completed = await runAgent({ seed: 420, maxTicks: 20 * 60 * RULES.hz });
   assert.equal(completed.reason, 'over');
   await page.evaluate((replay) => {
     window.metro.loadReplay(replay);
@@ -64,9 +64,9 @@ try {
   await page.waitForFunction(() => window.metro.controller.mode === 'replay');
   assert.equal(await page.evaluate(() => window.metro.controller.mode), 'replay');
   assert.ok(Number(await page.locator('#timeline').getAttribute('max')) >= completed.replay.duration, 'imported replay exposes its full timeline');
-  await page.locator('#timeline').fill('600');
+  await page.locator('#timeline').fill(String(30 * RULES.hz));
   await page.locator('#timeline').dispatchEvent('input');
-  assert.equal(await page.evaluate(() => window.metro.getState().tick), 600);
+  assert.equal(await page.evaluate(() => window.metro.getState().tick), 30 * RULES.hz);
 
   // A Creative station selection must not remove the only way to choose the next shape.
   await page.click('#new-game');

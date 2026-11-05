@@ -17,6 +17,18 @@ function route(s: State, line: number, stops: number[]): void {
 }
 
 describe('per-tick passenger service events', () => {
+  it('keeps the wall-clock boarding and first-departure times close to the 20 Hz baseline', () => {
+    const s = quiet(); route(s, 0, [1, 2]);
+    const t = s.trains[0]; t.dwell = 0;
+    const p = passenger(s, 'triangle'); station(s, 1).queue.push(p);
+    const events: ServiceEvent[] = [];
+    for (let i = 0; i < 40 && !events.some((event) => event.type === 'depart'); i++)
+      advance(s, (event) => events.push(event));
+    const board = events.find((event) => event.type === 'board')!;
+    const depart = events.find((event) => event.type === 'depart')!;
+    expect(board.tick).toBe(8); // 0.14 s, nearest tick to former 0.15 s
+    expect(depart.tick).toBe(27); // 0.54 s, nearest tick to former 0.55 s
+  });
   it('keeps in-flight passengers when a train is reassigned after a route edit', () => {
     const s = quiet(); route(s, 0, [1, 2]); route(s, 1, [2, 3]);
     const t = s.trains[0]; t.dwell = 0;
@@ -24,7 +36,7 @@ describe('per-tick passenger service events', () => {
     advance(s);
     expect(t.transfer?.passenger.id).toBe(p.id);
     expect(applyAction(s, { type: 'moveTrain', train: t.id, line: 1, station: 3 }).ok).toBe(true);
-    advance(s); advance(s); advance(s);
+    for (let i = 0; i < 7; i++) advance(s);
     expect(t.line).toBe(1);
     expect(t.transfer).toBeNull();
     expect(s.score + s.stations.reduce((n, stop) => n + stop.queue.length, 0) +
@@ -37,7 +49,7 @@ describe('per-tick passenger service events', () => {
     advance(s);
     expect(t.transfer?.passenger.id).toBe(p.id);
     expect(applyAction(s, { type: 'route', line: 0, stops: [] }).ok).toBe(true);
-    advance(s); advance(s); advance(s);
+    for (let i = 0; i < 7; i++) advance(s);
     expect(s.trains.some((train) => train.id === t.id)).toBe(false);
     expect(station(s, 1).queue.some((waiting) => waiting.id === p.id)).toBe(true);
   });
@@ -48,9 +60,7 @@ describe('per-tick passenger service events', () => {
     advance(s);
     expect(t.transfer?.passenger.id).toBe(p.id);
     expect(applyAction(s, { type: 'removeTrain', train: t.id }).ok).toBe(true);
-    advance(s);
-    advance(s);
-    advance(s);
+    for (let i = 0; i < 7; i++) advance(s);
     expect(s.trains.some((train) => train.id === t.id)).toBe(false);
     expect(station(s, 1).queue.some((waiting) => waiting.id === p.id)).toBe(true);
   });
@@ -64,7 +74,7 @@ describe('per-tick passenger service events', () => {
     advance(s);
     expect(t.transfer).toMatchObject({ direction: 'board', passenger: p });
     expect(applyAction(s, { type: 'carriage', train: t.id, delta: -1 }).ok).toBe(false);
-    advance(s); advance(s); advance(s);
+    for (let i = 0; i < 7; i++) advance(s);
     expect(t.passengers).toHaveLength(7);
     expect(t.carriages).toBe(1);
   });
@@ -74,14 +84,14 @@ describe('per-tick passenger service events', () => {
     const t = s.trains[0]; t.dwell = 0;
     const p = passenger(s, 'triangle'); station(s, 1).queue.push(p);
     advance(s);
-    expect(t.transfer).toMatchObject({ passenger: p, direction: 'board', stationId: 1, duration: 2, progress: 0 });
+    expect(t.transfer).toMatchObject({ passenger: p, direction: 'board', stationId: 1, duration: 6, progress: 0 });
     expect(t.passengers).toHaveLength(0);
     expect(station(s, 1).queue).toHaveLength(0);
     advance(s);
     expect(t.transfer?.progress).toBe(1);
     expect(t.passengers).toHaveLength(0);
-    advance(s); // endpoint reached, still owned by the in-flight phase
-    expect(t.transfer).toMatchObject({ passenger: p, direction: 'board', progress: 2, duration: 2 });
+    for (let i = 0; i < 5; i++) advance(s); // endpoint reached, still owned by the in-flight phase
+    expect(t.transfer).toMatchObject({ passenger: p, direction: 'board', progress: 6, duration: 6 });
     expect(t.passengers).toEqual([]);
     advance(s); // ownership changes only after the endpoint has been rendered
     expect(t.transfer).toBeNull();
@@ -95,7 +105,7 @@ describe('per-tick passenger service events', () => {
     const p = passenger(s, 'circle');
     t.passengers.push(p);
     const events: ServiceEvent[] = [];
-    for (let i = 0; i < 18; i++) advance(s, (event) => events.push(event));
+    for (let i = 0; i < 45; i++) advance(s, (event) => events.push(event));
     expect(events.filter((event) => event.passengerId === p.id).map((event) => event.type)).toEqual(['transferOut']);
     expect(t.to).toBe(3);
   });
@@ -107,7 +117,7 @@ describe('per-tick passenger service events', () => {
     const p = passenger(s, 'triangle');
     t.passengers.push(p);
     const events: ServiceEvent[] = [];
-    for (let i = 0; i < 18; i++) advance(s, (event) => events.push(event));
+    for (let i = 0; i < 45; i++) advance(s, (event) => events.push(event));
     expect(events.filter((event) => event.trainId === t.id && event.passengerId === p.id).map((event) => event.type)).toEqual(['deliver']);
     expect(t.to).toBe(1);
   });
@@ -118,7 +128,7 @@ describe('per-tick passenger service events', () => {
     const first = passenger(s, 'triangle'), second = passenger(s, 'triangle');
     station(s, 1).queue.push(first, second);
     const events: ServiceEvent[] = [];
-    for (let i = 0; i < 20; i++) advance(s, (event) => events.push(event));
+    for (let i = 0; i < 50; i++) advance(s, (event) => events.push(event));
     const boards = events.filter((event) => event.type === 'board');
     expect(boards.map((event) => event.passengerId)).toEqual([first.id, second.id]);
     expect(boards[1].tick).toBeGreaterThan(boards[0].tick);
@@ -141,13 +151,13 @@ describe('per-tick passenger service events', () => {
     advance(s, (event) => events.push(event));
     advance(s, (event) => events.push(event));
     expect(train.transfer?.progress).toBe(2);
-    advance(s, (event) => events.push(event));
+    for (let i = 0; i < 5; i++) advance(s, (event) => events.push(event));
     expect(train.transfer).toBeNull();
     expect(train.passengers.map((r) => r.id)).toEqual([p.id]);
-    expect(events.at(-1)).toEqual({ type: 'board', tick: 4, sequence: 0,
+    expect(events.at(-1)).toEqual({ type: 'board', tick: 8, sequence: 0,
       stationId: 1, trainId: train.id, lineId: 0, passengerId: p.id, shape: 'triangle' });
-    for (let i = 0; i < 7; i++) advance(s, (event) => events.push(event));
-    expect(events.at(-1)).toEqual({ type: 'depart', tick: 11, sequence: 0,
+    for (let i = 0; i < 19; i++) advance(s, (event) => events.push(event));
+    expect(events.at(-1)).toEqual({ type: 'depart', tick: 27, sequence: 0,
       stationId: 1, trainId: train.id, lineId: 0, passengerId: null, shape: null });
   });
 
@@ -173,7 +183,7 @@ describe('per-tick passenger service events', () => {
     ]);
     expect(first.transfer).toMatchObject({ passenger: transfer, direction: 'alight', stationId: 2, progress: 0 });
     expect(second.transfer).toBeNull();
-    for (let i = 0; i < 22; i++) advance(s, (event) => events.push(event));
+    for (let i = 0; i < 55; i++) advance(s, (event) => events.push(event));
     const firstEvents = events.filter((event) => event.trainId === first.id);
     expect(firstEvents.map((event) => event.type)).toEqual(['arrive', 'transferOut', 'deliver', 'board', 'depart']);
     expect(firstEvents[2].tick).toBeGreaterThan(firstEvents[1].tick);
@@ -193,9 +203,9 @@ describe('per-tick passenger service events', () => {
     const p = passenger(s, 'triangle');
     station(s, 1).queue.push(p);
     const events: ServiceEvent[] = [];
-    for (let i = 0; i < 110; i++) advance(s, (event) => events.push(event));
+    for (let i = 0; i < 275; i++) advance(s, (event) => events.push(event));
     expect(events.slice(0, 5).map(({ type, tick, sequence }) => [type, tick, sequence])).toEqual([
-      ['board', 4, 0], ['depart', 11, 0], ['arrive', expect.any(Number), 0],
+      ['board', 8, 0], ['depart', 27, 0], ['arrive', expect.any(Number), 0],
       ['deliver', expect.any(Number), 0], ['depart', expect.any(Number), 0],
     ]);
     expect(events[2].tick).toBeLessThan(events[3].tick);
@@ -216,7 +226,7 @@ describe('per-tick passenger service events', () => {
     route(observed, 1, [2, 3]);
     const unobserved = copy(observed);
     const events: ServiceEvent[] = [];
-    for (let i = 0; i < 700; i++) {
+    for (let i = 0; i < 1750; i++) {
       expect(advance(observed, (event) => events.push(event))).toBe(advance(unobserved));
       expect(hash(observed)).toBe(hash(unobserved));
       expect(observed).toEqual(unobserved);

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 import { preview } from 'vite';
 import { browserLaunchOptions } from './browser-launch.mjs';
+import { RULES } from '../dist-sdk/index.mjs';
 
 const out = 'test-results/playthrough';
 await mkdir(out, { recursive: true });
@@ -123,12 +124,12 @@ try {
       record('UI-weekly-choice', { choice, after: await state(page) });
       continue;
     }
-    const after = await page.evaluate(() => {
-      window.metro.step(240);
+    const after = await page.evaluate((ticks) => {
+      window.metro.step(ticks);
       const s = window.metro.getState();
       return { tick: s.tick, week: s.week, phase: s.phase, score: s.score, stations: s.stations.length };
-    });
-    if (i % 4 === 0 || after.phase !== 'playing') record('API-step-240-ticks', { iteration: i, after });
+    }, RULES.dayTicks);
+    if (i % 4 === 0 || after.phase !== 'playing') record('API-step-one-game-day', { iteration: i, after });
     if (i === 20 || i === 40) await shot(page, `desktop-api-progress-${i}`);
   }
   record('API-accelerated-final', { state: await state(page), layout: await layout(page), overlay: await page.locator('#game-over').innerText() });
@@ -163,7 +164,7 @@ try {
   })));
   record('UI-mobile-text-metrics', { textMetrics });
   // White-box mobile time fixture; reward is still accepted by a real touch/click on its visible option.
-  const advanced = await mobile.evaluate(() => { window.metro.step(1680); const s = window.metro.getState(); return { phase: s.phase, tick: s.tick, week: s.week, score: s.score }; });
+  const advanced = await mobile.evaluate((ticks) => { window.metro.step(ticks); const s = window.metro.getState(); return { phase: s.phase, tick: s.tick, week: s.week, score: s.score }; }, RULES.weekTicks);
   await mobile.waitForTimeout(200);
   record('API-mobile-step-to-reward', { advanced, layout: await layout(mobile) });
   if (advanced.phase === 'upgrade') {

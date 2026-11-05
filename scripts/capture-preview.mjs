@@ -1,5 +1,6 @@
 import { chromium } from '@playwright/test';
 import { readFile, mkdir } from 'node:fs/promises';
+import { RULES } from '../dist-sdk/index.mjs';
 const replay = JSON.parse(await readFile('test-results/production/node-agent.json', 'utf8'));
 await mkdir('artifacts', { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -10,10 +11,10 @@ try {
   });
   await page.goto('http://127.0.0.1:4175/', { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.metro);
-  await page.evaluate((replay) => {
+  await page.evaluate(({ replay, tick }) => {
     window.metro.loadReplay(replay);
-    window.metro.seek(4900);
-  }, replay);
+    window.metro.seek(tick);
+  }, { replay, tick: 245 * RULES.hz });
   await page.click('#tab-dispatch');
   await page.click('#inspector-close');
   await page.waitForTimeout(250);

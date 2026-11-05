@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { runAgent, ReplayPlayer, hash, tunnelsUsed } from '../dist-sdk/index.mjs';
+import { runAgent, ReplayPlayer, hash, tunnelsUsed, RULES } from '../dist-sdk/index.mjs';
 const results = [];
+const limit = RULES.hz * 600;
 for (const city of ['orchard', 'harbor', 'islands'])
   for (const mode of ['normal', 'endless', 'extreme', 'creative'])
     for (const seed of [42, 420]) {
-      const run = await runAgent({ city, mode, seed, maxTicks: 12000 });
+      const run = await runAgent({ city, mode, seed, maxTicks: limit });
       const player = new ReplayPlayer(run.replay),
         s = player.getState();
       assert.equal(hash(s), run.replay.finalHash);
@@ -16,7 +17,7 @@ for (const city of ['orchard', 'harbor', 'islands'])
         s.trains.reduce((n, t) => n + t.passengers.length + (t.transfer ? 1 : 0), 0);
       assert.equal(population, s.totalSpawned);
       assert.ok(tunnelsUsed(s) <= s.resources.tunnels);
-      if (mode === 'endless' || mode === 'creative') assert.equal(s.tick, 12000);
+      if (mode === 'endless' || mode === 'creative') assert.equal(s.tick, limit);
       results.push({
         city,
         mode,

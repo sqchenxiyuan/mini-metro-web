@@ -222,7 +222,7 @@ export class MetroController {
     } finally {
       if (epoch === this.epoch) {
         this.pending = null;
-        this.nextDecision = this.session.tick + 80;
+        this.nextDecision = this.session.tick + 200;
         if (this.failures >= 3) {
           this.policy = null;
           this.paused = true;

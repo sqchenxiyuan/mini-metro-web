@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
 import { browserLaunchOptions } from './browser-launch.mjs';
+import { RULES } from '../dist-sdk/index.mjs';
 
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
 await server.listen();
@@ -13,7 +14,7 @@ try {
     page.on('pageerror', (error) => errors.push(String(error)));
     await page.goto(server.resolvedUrls.local[0], { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.metro);
-    const frames = await page.evaluate(() => {
+    const frames = await page.evaluate((hz) => {
       const metro = window.metro;
       metro.restart({ seed: 420 });
       const initial = metro.getState();
@@ -27,11 +28,11 @@ try {
       for (let i = 0; i < 3; i++) {
         const now = metro.getState();
         const deadline = now.nextStation;
-        metro.step(deadline - 240 - now.elapsed);
+        metro.step(deadline - 12 * hz - now.elapsed);
         const early = sample();
-        metro.step(120);
+        metro.step(6 * hz);
         const middle = sample();
-        metro.step(119);
+        metro.step(6 * hz - 1);
         const before = sample();
         metro.step(1);
         const after = sample();
@@ -39,7 +40,7 @@ try {
         spawns.push({ early, middle, before, after, newStation: metro.projectStation(latest.id) });
       }
       return spawns;
-    });
+    }, RULES.hz);
     const summaries = [];
     for (const sample of frames) {
       assert.equal(sample.after.state.stations.length, sample.before.state.stations.length + 1);
