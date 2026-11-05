@@ -14,6 +14,73 @@ import {
 import type { City, ServiceEvent, Shape, State, Station } from './types';
 import { deriveTrackLayout } from './track-layout';
 
+/** Share the renderer's offset/miter geometry with pointer hit testing. */
+function laneVertices(
+  points: { x: number; y: number }[], offset: number, height: number,
+  endpointOffsets?: { from: number; to: number },
+): THREE.Vector3[] {
+  const vertices: THREE.Vector3[] = [];
+  const startOffset = endpointOffsets?.from ?? offset;
+  const endOffset = endpointOffsets?.to ?? offset;
+  const totalLength = points.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - points[i].x, p.y - points[i].y), 0);
+  let traveled = 0;
+  const at = (distance: number) => startOffset + (endOffset - startOffset) * (totalLength ? distance / totalLength : 0);
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const dx = b.x - a.x, dz = b.y - a.y;
+    const length = Math.hypot(dx, dz);
+    if (length < 1e-6) continue;
+    const nx = dz / length, nz = -dx / length;
+    if (!vertices.length) vertices.push(new THREE.Vector3(a.x + nx * at(0), height, a.y + nz * at(0)));
+    traveled += length;
+    const localOffset = at(traveled);
+    // Meet the adjacent offset segments with a bounded miter, avoiding a visible corner crack.
+    if (i < points.length - 1) {
+      const next = points[i + 1], ndx = next.x - b.x, ndz = next.y - b.y;
+      const nLength = Math.hypot(ndx, ndz);
+      if (nLength > 1e-6) {
+        const mx = ndz / nLength, mz = -ndx / nLength;
+        const scale = 1 + nx * mx + nz * mz;
+        if (scale > 0.5) {
+          const miter = localOffset / scale;
+          vertices.push(new THREE.Vector3(b.x + (nx + mx) * miter, height, b.y + (nz + mz) * miter));
+          continue;
+        }
+      }
+    }
+    vertices.push(new THREE.Vector3(b.x + nx * localOffset, height, b.y + nz * localOffset));
+  }
+  return vertices;
+}
+
+/** Return the selected line's insertion index when a pointer is near its visible colored rail. */
+export function hitTestVisibleLane(
+  state: State, lineId: number, pointer: { x: number; y: number },
+  project: (x: number, y: number, height: number) => { x: number; y: number }, radius = 12,
+): number | null {
+  const line = state.lines.find((item) => item.id === lineId);
+  if (!line) return null;
+  const layout = deriveTrackLayout(state);
+  let best = radius, result: number | null = null;
+  for (const [index, [a, b]] of segments(line).entries()) {
+    const edge = layout.segments.find((item) => item.from === Math.min(a, b) && item.to === Math.max(a, b));
+    const lane = edge?.lanes.find((item) => item.lineId === lineId);
+    if (!edge || !lane) continue;
+    const vertices = laneVertices(edge.points, lane.offset, 0.43,
+      edge.laneEndpoints?.find((item) => item.lineId === lineId) ?? edge.endpointOffsets);
+    const points = vertices.map((point) => project(point.x, point.z, point.y));
+    for (let i = 1; i < points.length; i++) {
+      const p = points[i - 1], q = points[i], dx = q.x - p.x, dy = q.y - p.y;
+      const lengthSquared = dx * dx + dy * dy;
+      if (!lengthSquared) continue;
+      const t = Math.max(0, Math.min(1, ((pointer.x - p.x) * dx + (pointer.y - p.y) * dy) / lengthSquared));
+      const d = Math.hypot(pointer.x - p.x - dx * t, pointer.y - p.y - dy * t);
+      if (d < best) { best = d; result = index + 1; }
+    }
+  }
+  return result;
+}
+
 const MAT = (color: THREE.ColorRepresentation, roughness = 0.85) =>
   new THREE.MeshStandardMaterial({ color, roughness, flatShading: true });
 function mesh(
@@ -443,38 +510,7 @@ export class MetroRenderer {
     points: { x: number; y: number }[], offset: number, height: number,
     endpointOffsets?: { from: number; to: number },
   ): THREE.Vector3[] {
-    const vertices: THREE.Vector3[] = [];
-    const startOffset = endpointOffsets?.from ?? offset;
-    const endOffset = endpointOffsets?.to ?? offset;
-    const totalLength = points.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - points[i].x, p.y - points[i].y), 0);
-    let traveled = 0;
-    const at = (distance: number) => startOffset + (endOffset - startOffset) * (totalLength ? distance / totalLength : 0);
-    for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1], b = points[i];
-      const dx = b.x - a.x, dz = b.y - a.y;
-      const length = Math.hypot(dx, dz);
-      if (length < 1e-6) continue;
-      const nx = dz / length, nz = -dx / length;
-      if (!vertices.length) vertices.push(new THREE.Vector3(a.x + nx * at(0), height, a.y + nz * at(0)));
-      traveled += length;
-      const localOffset = at(traveled);
-      // Meet the adjacent offset segments with a bounded miter, avoiding a visible corner crack.
-      if (i < points.length - 1) {
-        const next = points[i + 1], ndx = next.x - b.x, ndz = next.y - b.y;
-        const nLength = Math.hypot(ndx, ndz);
-        if (nLength > 1e-6) {
-          const mx = ndz / nLength, mz = -ndx / nLength;
-          const scale = 1 + nx * mx + nz * mz;
-          if (scale > 0.5) {
-            const miter = localOffset / scale;
-            vertices.push(new THREE.Vector3(b.x + (nx + mx) * miter, height, b.y + (nz + mz) * miter));
-            continue;
-          }
-        }
-      }
-      vertices.push(new THREE.Vector3(b.x + nx * localOffset, height, b.y + nz * localOffset));
-    }
-    return vertices;
+    return laneVertices(points, offset, height, endpointOffsets);
   }
   private laneCurve(vertices: THREE.Vector3[]): THREE.CurvePath<THREE.Vector3> {
     const path = new THREE.CurvePath<THREE.Vector3>();

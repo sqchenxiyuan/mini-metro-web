@@ -2,7 +2,8 @@
 import './style.css';
 import './minimal.css';
 import { MetroController } from './browser';
-import { MetroRenderer } from './renderer';
+import { hitTestVisibleLane, MetroRenderer } from './renderer';
+import { layoutOverlays } from './overlay-layout';
 import { creativeStationPicker } from './station-picker';
 import { MetroAudio } from './audio';
 import { observeState } from './session';
@@ -16,9 +17,7 @@ import {
   applyAction,
   copy,
   hash,
-  segments,
   stationCapacity,
-  trackPoints,
   trackPosition,
   tunnelsUsed,
 } from './rules';
@@ -47,7 +46,8 @@ app.innerHTML = `
   </aside>
   <section class="map-panel" aria-label="地铁地图">
     <div class="map-heading"><div><span class="live-dot"></span><span id="map-status">准备出发</span></div><span id="week-label">第 1 周 · 星期一</span></div>
-    <div id="stage"><div id="station-layer"></div><div id="train-layer"></div></div>
+    <div id="stage"><div id="station-layer"></div><div id="train-layer"></div><div id="overlay-layer"></div></div>
+    <button id="map-alerts" type="button" aria-label="查看地图拥挤车站" hidden></button>
     <div id="train-detail" class="train-detail" hidden></div>
     <div class="map-tools"><button id="zoom-out" title="缩小">−</button><button id="zoom-reset" title="恢复视野">⌂</button><button id="zoom-in" title="放大">＋</button><button id="screenshot" title="保存地图截图">▧</button></div>
     <div id="map-hint" class="map-hint"><span>拖过车站，连起第一条线路。</span><button id="sample-route">示范 ↗</button></div>
@@ -81,6 +81,7 @@ app.innerHTML = `
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = $('stage'),
   layer = $('station-layer'),
+  overlayLayer = $('overlay-layer'),
   trainLayer = $('train-layer'),
   controller = new MetroController(),
   renderer = new MetroRenderer(stage),
@@ -140,6 +141,10 @@ function resetView(): void {
   nodes.clear();
   stationKey = lineKey = trainKey = detailKey = decisionKey = phaseKey = '';
   selectedStation = null;
+  alertCycle = [];
+  alertCycleReplayKey = null;
+  $('map-alerts').hidden = true;
+  $('map-alerts').dataset.omitted = '';
   selectedTrain = null;
   $('train-detail').hidden = true;
   delete $('train-detail').dataset.groupStation;
@@ -156,6 +161,7 @@ function resetView(): void {
     ? `<span class="eyebrow">CREATIVE CITY</span><p>选择站型，再点击空白地面建站。</p>${creativeStationPicker()}`
     : '<span class="eyebrow">STATION NOTES</span><p>点一下车站，查看等候乘客<br>和它连接的线路。</p>';
   detailKey = creative ? 'creative' : '';
+  update();
 }
 function setInspector(open: boolean): void {
   $('inspector').hidden = !open;
@@ -196,6 +202,29 @@ function nearest(clientX: number, clientY: number): number | null {
   }
   return result;
 }
+function nearestStationCore(clientX: number, clientY: number): number | null {
+  const rect = stage.getBoundingClientRect();
+  let best = 12, result: number | null = null;
+  for (const p of lastState.stations) {
+    const q = renderer.project(p.x, p.y, 0.6);
+    const distance = Math.hypot(q.x - (clientX - rect.left), q.y - (clientY - rect.top));
+    if (distance < best) { best = distance; result = p.id; }
+  }
+  return result;
+}
+function stationUnderPointer(clientX: number, clientY: number): number | null {
+  const rect = stage.getBoundingClientRect();
+  const candidates = [...nodes].filter(([, node]) => {
+    const b = node.getBoundingClientRect();
+    return clientX >= b.left && clientX <= b.right && clientY >= b.top && clientY <= b.bottom;
+  });
+  if (!candidates.length) return null;
+  return candidates.map(([id]) => {
+    const p = lastState.stations.find((station) => station.id === id)!;
+    const q = renderer.project(p.x, p.y, 0.6);
+    return { id, distance: Math.hypot(q.x - (clientX - rect.left), q.y - (clientY - rect.top)) };
+  }).sort((a, b) => a.distance - b.distance || a.id - b.id)[0].id;
+}
 function currentLine() {
   return controller.getState().lines[controller.selectedLine];
 }
@@ -217,42 +246,23 @@ let pointerStation: number | null = null;
 let insertAt: number | null = null,
   originalStops: number[] = [];
 function nearbySegment(x: number, y: number): number | null {
-  const s = controller.getState(),
-    l = s.lines[controller.selectedLine],
-    rect = stage.getBoundingClientRect();
-  let best = 12,
-    result: number | null = null;
-  for (const [index, [a, b]] of segments(l).entries()) {
-    const points = trackPoints(
-      s.stations.find((p) => p.id === a)!,
-      s.stations.find((p) => p.id === b)!,
-    ).map((p) => renderer.project(p.x, p.y, 0.43));
-    for (let i = 1; i < points.length; i++) {
-      const p = points[i - 1],
-        q = points[i],
-        dx = q.x - p.x,
-        dy = q.y - p.y,
-        t = Math.max(
-          0,
-          Math.min(
-            1,
-            ((x - rect.left - p.x) * dx + (y - rect.top - p.y) * dy) / (dx * dx + dy * dy),
-          ),
-        );
-      const d = Math.hypot(x - rect.left - p.x - dx * t, y - rect.top - p.y - dy * t);
-      if (d < best) {
-        best = d;
-        result = index + 1;
-      }
-    }
-  }
-  return result;
+  const rect = stage.getBoundingClientRect();
+  return hitTestVisibleLane(controller.getState(), controller.selectedLine,
+    { x: x - rect.left, y: y - rect.top }, renderer.project.bind(renderer), 12);
 }
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || controller.mode === 'replay') return;
-  if ((e.target as Element).closest('[data-train-id], [data-train-group]')) return;
+  const coreStation = nearestStationCore(e.clientX, e.clientY);
   const label = (e.target as Element).closest<HTMLElement>('[data-station]');
-  const id = label ? Number(label.dataset.station) : nearest(e.clientX, e.clientY);
+  const trainTarget = (e.target as Element).closest('[data-train-id], [data-train-group]');
+  // A train's transparent hit box may overlap an actual station touch target.
+  const buttonStation = stationUnderPointer(e.clientX, e.clientY);
+  if (trainTarget && coreStation === null && buttonStation === null) return;
+  const nearby = nearest(e.clientX, e.clientY);
+  // DOM stacking is arbitrary when touch targets overlap. Prefer the closest
+  // rendered station, then the closest button within the touch target.
+  const id = coreStation ?? (trainTarget ? buttonStation : null) ?? nearby
+    ?? (label ? Number(label.dataset.station) : null) ?? buttonStation;
   pointerStation = id;
   if (id === null) {
     insertAt = nearbySegment(e.clientX, e.clientY);
@@ -376,8 +386,17 @@ function removeStation(id: number): void {
   );
 }
 
+let alertCycle: number[] = [];
+let alertCycleReplayKey: string | null = null;
 function update(): void {
   const s = controller.getState();
+  // A replay seek changes the authoritative snapshot; only a same-snapshot
+  // visual reflow may retain the pending list of omitted stations.
+  const replayKey = controller.mode === 'replay' ? `${s.tick}:${controller.focusedDecision ?? ''}` : null;
+  if (alertCycleReplayKey !== replayKey) {
+    alertCycle = [];
+    alertCycleReplayKey = replayKey;
+  }
   controller.selectedLine = Math.min(controller.selectedLine, s.lines.length - 1);
   lastState = s;
   renderer.render(s, controller.selectedLine, controller.drainServiceEvents(), controller.motion);
@@ -398,31 +417,100 @@ function update(): void {
         nodes.set(p.id, n);
       }
   }
+  const stageBounds = stage.getBoundingClientRect();
+  // Recompute visual layout from this frame's camera projection only.
+  const positions = s.stations.map((p) => ({ p, point: renderer.project(p.x, p.y, 0.6) }));
+  const positionById = new Map(positions.map(({ p, point }) => [p.id, point]));
+  const stationaryGroups = new Map<number, typeof s.trains>();
+  for (const t of s.trains) if (t.to === null) {
+    const group = stationaryGroups.get(t.from) ?? [];
+    group.push(t);
+    stationaryGroups.set(t.from, group);
+  }
+  const reservedBadges = s.trains.flatMap((t) => {
+    const group = stationaryGroups.get(t.from) ?? [];
+    if (t.to === null && group[0]?.id !== t.id) return [];
+    const a = s.stations.find((p) => p.id === t.from)!;
+    const b = t.to === null ? a : s.stations.find((p) => p.id === t.to)!;
+    const position = trackPosition(a, b, t.progress);
+    const visual = t.to === null && group.length > 1
+      ? renderer.project(a.x, a.y, 0.9)
+      : renderer.projectTrain(t.id) ?? renderer.project(position.x, position.y, 0.9);
+    const width = stageBounds.width <= 650 ? 44 : 34;
+    const height = stageBounds.width <= 650 ? 35 : 25;
+    const offset = t.to === null && group.length > 1 ? 1.55 : 0.5;
+    return [{ x: visual.x - width / 2, y: visual.y - height * offset, width, height }];
+  });
+  const placed = layoutOverlays(positions.map(({ p, point }) => ({ id: p.id, x: point.x,
+    y: point.y, queue: p.queue.length, crowd: p.crowd, selected: p.id === selectedStation })),
+    { width: stageBounds.width, height: stageBounds.height }, stageBounds.width <= 650,
+    reservedBadges);
+  const byId = new Map(placed.map((item) => [item.id, item]));
   for (const p of s.stations) {
-    const q = renderer.project(p.x, p.y, 0.6),
+    const q = positionById.get(p.id)!,
       n = nodes.get(p.id)!;
     n.style.left = `${q.x}px`;
     n.style.top = `${q.y}px`;
     n.classList.toggle('selected', p.id === selectedStation);
     n.classList.toggle('crowded', p.queue.length > stationCapacity(p));
-    n.style.setProperty('--crowd', `${(p.crowd / RULES.crowdTicks) * 100}%`);
     n.setAttribute('aria-label', `${p.id} 号 ${p.shape} 车站，${p.queue.length} 人候车${p.crowd ? `，拥挤还剩 ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒` : ''}`);
-    const content = `${p.queue.length
-        ? `<span class="passengers">${p.queue
-            .slice(0, 8)
-            .map((v) => `<i class="shape-${v.shape}">${GLYPHS[v.shape]}</i>`)
-            .join('')}${p.queue.length > 8 ? `<b>+${p.queue.length - 8}</b>` : ''}</span>`
-        : ''
-    }${p.crowd > 0 ? `<span class="crowd-bar"><i></i></span><span class="crowd-countdown">⚠ ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒</span>` : ''}`;
-    if (n.innerHTML !== content) n.innerHTML = content;
+    // The 44px touch target stays on the station; information labels are
+    // separate non-interactive screen-space overlays.
+    if (n.innerHTML) n.innerHTML = '';
   }
+  const liveOverlays = new Set<string>();
+  const show = (key: string, content: string, box: { x: number; y: number; width: number; height: number }, type: string) => {
+    liveOverlays.add(key);
+    let node = overlayLayer.querySelector<HTMLElement>(`[data-overlay="${key}"]`);
+    if (!node) {
+      node = document.createElement('span');
+      node.dataset.overlay = key;
+      overlayLayer.append(node);
+    }
+    node.className = type;
+    node.style.left = `${box.x}px`;
+    node.style.top = `${box.y}px`;
+    node.style.width = `${box.width}px`;
+    node.style.height = `${box.height}px`;
+    if (node.innerHTML !== content) node.innerHTML = content;
+  };
+  let fallbackWarnings = 0, fallbackQueues = 0;
+  const omittedStationIds = new Set<number>();
+  for (const p of s.stations) {
+    const layout = byId.get(p.id)!;
+    if (layout.queue) {
+      const level = layout.queue.level;
+      const content = level === 'full'
+        ? `${p.queue.slice(0, 8).map((v) => `<i class="shape-${v.shape}">${GLYPHS[v.shape]}</i>`).join('')}${p.queue.length > 8 ? `<b>+${p.queue.length - 8}</b>` : ''}`
+        : level === 'compact'
+          ? `<i class="shape-${p.queue[0].shape}">${GLYPHS[p.queue[0].shape]}</i><b>+${p.queue.length - 1}</b>`
+          : `<b>${p.queue.length}</b>`;
+      show(`q-${p.id}`, content, layout.queue, `passengers overlay-passengers overlay-${level}`);
+    }
+    if (layout.warning) {
+      show(`w-${p.id}`, `⚠ ${Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz)} 秒`,
+        layout.warning, 'crowd-countdown overlay-warning');
+    }
+    if (layout.warningFallback) fallbackWarnings++;
+    if (layout.queueFallback) fallbackQueues++;
+    if (layout.warningFallback || layout.queueFallback) omittedStationIds.add(p.id);
+  }
+  for (const el of overlayLayer.querySelectorAll<HTMLElement>('[data-overlay]'))
+    if (!liveOverlays.has(el.dataset.overlay!)) el.remove();
+  const alerts = $('map-alerts');
+  // A captured cycle stays available even if selection temporarily makes all
+  // marks fit; the next click still visits its remaining stations.
+  alerts.hidden = fallbackWarnings === 0 && fallbackQueues === 0 && alertCycle.length === 0;
+  alerts.dataset.omitted = [...omittedStationIds].join(',');
+  // Announce omitted marks and keep the station picker navigable.
+  alerts.textContent = [fallbackWarnings ? `⚠ ${fallbackWarnings} 站拥挤` : '',
+    fallbackQueues ? `${fallbackQueues} 站候车详情请点站查看` : '',
+    alertCycle.length ? `另有 ${alertCycle.length} 站待查看` : ''].filter(Boolean).join(' · ');
+  alerts.title = fallbackWarnings ? '点击逐站查看拥挤详情' :
+    alertCycle.length ? '点击查看剩余待查看车站' : '点击逐站查看候车详情';
+  alerts.setAttribute('aria-label', `${alerts.textContent}，点击逐站查看`);
   const activeTrainIds = new Set(s.trains.map((t) => String(t.id)));
-  const stationTrains = new Map<number, typeof s.trains>();
-  for (const t of s.trains) if (t.to === null) {
-    const group = stationTrains.get(t.from) ?? [];
-    group.push(t);
-    stationTrains.set(t.from, group);
-  }
+  const stationTrains = stationaryGroups;
   const visibleGroups = new Set([...stationTrains].filter(([, group]) => group.length > 1).map(([id]) => String(id)));
   for (const badge of trainLayer.querySelectorAll<HTMLElement>('[data-train-group]'))
     if (!visibleGroups.has(badge.dataset.trainGroup!)) badge.remove();
@@ -656,6 +744,22 @@ function update(): void {
 controller.onChange = update;
 controller.capture = () => renderer.capture();
 update();
+$('map-alerts').onclick = () => {
+  const s = controller.getState();
+  if (!alertCycle.length) {
+    const omitted = new Set(($('map-alerts').dataset.omitted ?? '').split(',').map(Number));
+    alertCycle = [...s.stations].filter((p) => omitted.has(p.id))
+      .sort((a, b) => b.crowd - a.crowd || b.queue.length - a.queue.length || a.id - b.id)
+      .map((p) => p.id);
+  }
+  const nextId = alertCycle.shift();
+  if (nextId === undefined) return;
+  selectedStation = nextId;
+  setInspector(false);
+  update();
+  const label = nodes.get(nextId);
+  if (label) label.focus({ preventScroll: true });
+};
 $('line-tools-toggle').onclick = () => setLineTools($('line-tools').hidden);
 $('line-tools-close').onclick = () => setLineTools(false);
 $('tools-toggle').onclick = () => {
@@ -954,6 +1058,8 @@ trainLayer.addEventListener('click', (e) => {
   const target = e.target as Element;
   const group = target.closest<HTMLElement>('[data-train-group]');
   if (group) {
+    const hitStation = stationUnderPointer(e.clientX, e.clientY);
+    if (hitStation !== null && hitStation !== Number(group.dataset.trainGroup)) return;
     e.stopPropagation();
     const stationId = Number(group.dataset.trainGroup);
     const trains = controller.getState().trains.filter((t) => t.from === stationId && t.to === null);
@@ -968,6 +1074,8 @@ trainLayer.addEventListener('click', (e) => {
   }
   const badge = target.closest<HTMLElement>('[data-train-id]');
   if (!badge) return;
+  if (nearestStationCore(e.clientX, e.clientY) !== null ||
+    stationUnderPointer(e.clientX, e.clientY) !== null) return;
   e.stopPropagation();
   selectedTrain = Number(badge.dataset.trainId);
   uiAt = 0;
@@ -1000,6 +1108,7 @@ stage.addEventListener('click', (e) => {
 window.addEventListener('keydown', (e) => {
   if (
     (e.target as HTMLElement).matches('input,select,textarea') ||
+    (e.code === 'Space' && (e.target as HTMLElement).matches('button')) ||
     document.querySelector('dialog[open]')
   )
     return;

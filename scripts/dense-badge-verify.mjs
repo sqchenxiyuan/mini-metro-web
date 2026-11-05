@@ -26,9 +26,17 @@ try {
   assert.doesNotMatch(await group.innerText(), /\d/);
   await group.tap();
   await page.waitForFunction(() => document.querySelectorAll('[data-train-choice]').length === 7);
-  await page.keyboard.press('Escape');
+  // Dismiss the pointer-opened list before checking keyboard activation.
+  await page.locator('#train-detail-close').click();
   assert.equal(await page.locator('#train-detail').isVisible(), false);
-  assert.equal(await page.locator('#train-detail').getAttribute('data-group-station'), null);
+  await group.focus();
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => document.querySelectorAll('[data-train-choice]').length === 7);
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true,
+    'Space on a focused train button activates it rather than toggling simulation');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#train-detail').isVisible(), false,
+    'Escape must close a chooser even while the group badge has keyboard focus');
   await group.tap();
   await page.waitForFunction(() => document.querySelectorAll('[data-train-choice]').length === 7);
   const choices = page.locator('[data-train-choice]');

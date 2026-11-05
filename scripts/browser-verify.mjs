@@ -79,6 +79,7 @@ try {
   for (const p of points.slice(1)) await page.mouse.move(p.x, p.y, { steps: 12 });
   await page.mouse.up();
   await page.waitForFunction(() => window.metro.getState().lines[0].stops.length === 3);
+  await page.locator('body').click({ position: { x: 2, y: 2 } });
   await page.keyboard.press('Space');
   assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
   assert.deepEqual(await page.evaluate(() => window.metro.getState().lines[0].stops), [1, 2, 3]);
