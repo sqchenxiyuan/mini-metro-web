@@ -58,6 +58,83 @@ function transfers(renderer: MetroRenderer) {
 afterEach(() => { canvases.length = 0; });
 
 describe('train load feedback', () => {
+  it('interpolates only a continuous train hop and never moves the authoritative position', () => {
+    const { renderer, state, train } = setup();
+    const t = state.trains[0];
+    t.to = state.stations[1].id;
+    t.progress = 0.2;
+    renderer.render(state);
+    const previous = structuredClone(state);
+    t.progress = 0.4;
+    state.tick++;
+    const authoritative = JSON.stringify(state);
+    renderer.render(state, 0, undefined, { previous, alpha: 0.5 });
+    const a = state.stations[0], b = state.stations[1];
+    const source = renderer.project(a.x, a.y);
+    const destination = renderer.project(b.x, b.y);
+    const trainX = renderer.project(train().position.x, train().position.z).x;
+    expect(trainX).toBeGreaterThan(source.x + (destination.x - source.x) * 0.2);
+    expect(trainX).toBeLessThan(source.x + (destination.x - source.x) * 0.4);
+    expect(renderer.projectTrain(100)).toEqual(renderer.project(train().position.x, train().position.z, 0.9));
+    expect(JSON.stringify(state)).toBe(authoritative);
+    t.to = null;
+    renderer.render(state, 0, undefined, { previous, alpha: 0.5 });
+    expect(train().position.x).toBe(a.x);
+    renderer.dispose();
+  });
+  it('does not snap from an arrival pose back to the preceding station after a route edit', () => {
+    const { renderer, state, train } = setup();
+    const [a, b] = state.stations;
+    const previous = structuredClone(state);
+    previous.tick = 8;
+    previous.trains[0].from = a.id;
+    previous.trains[0].to = b.id;
+    previous.trains[0].progress = 0.95;
+    state.tick = 9;
+    state.trains[0].from = b.id;
+    state.trains[0].to = null;
+    renderer.render(state, 0, undefined, { previous, alpha: 0.5 });
+    const before = train().position.clone();
+    state.lines[0].stops = [a.id, state.stations[2].id];
+    renderer.render(state, 0, undefined, { previous, alpha: 0.5 });
+    expect(train().position.distanceTo(before)).toBeLessThan(0.001);
+    renderer.dispose();
+  });
+  it('does not interpolate a train after its line or route changes', () => {
+    const { renderer, state, train } = setup();
+    const t = state.trains[0], previous = structuredClone(state);
+    previous.tick = 8;
+    previous.trains[0].to = state.stations[1].id;
+    previous.trains[0].progress = 0.9;
+    state.tick = 9;
+    t.line = 1;
+    t.from = state.stations[0].id;
+    t.to = state.stations[1].id;
+    t.progress = 0.1;
+    renderer.render(state, 0, undefined, { previous, alpha: 0.5 });
+    const actual = renderer.project(train().position.x, train().position.z).x;
+    const a = renderer.project(state.stations[0].x, state.stations[0].y).x;
+    const b = renderer.project(state.stations[1].x, state.stations[1].y).x;
+    expect(actual).toBeCloseTo(a + (b - a) * 0.1);
+    renderer.dispose();
+  });
+  it('eases a final train hop into its station rather than snapping at arrival', () => {
+    const { renderer, state, train } = setup();
+    const [a, b] = state.stations;
+    const previous = structuredClone(state);
+    previous.tick = 8;
+    previous.trains[0].from = a.id;
+    previous.trains[0].to = b.id;
+    previous.trains[0].progress = 0.95;
+    state.tick = 9;
+    state.trains[0].from = b.id;
+    state.trains[0].to = null;
+    renderer.render(state, 0, undefined, { previous, alpha: 0.5 });
+    expect(train().position.distanceTo(new THREE.Vector3(b.x, 0.48, b.y))).toBeGreaterThan(0.05);
+    renderer.render(state, 0, undefined, { previous, alpha: 1 });
+    expect(train().position.x).toBeCloseTo(b.x);
+    renderer.dispose();
+  });
   it('renders a current in-progress transfer after skipped browser frames', () => {
     const { renderer, state } = setup();
     state.trains[0].dwell = 0;

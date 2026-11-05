@@ -597,7 +597,8 @@ export class MetroRenderer {
     }
     this.loadSnapshot = current;
   }
-  render(s: State, selectedLine = 0, events?: readonly ServiceEvent[]): void {
+  render(s: State, selectedLine = 0, events?: readonly ServiceEvent[],
+    motion?: { previous: State | null; alpha: number }): void {
     if (this.loadSnapshot && s.tick < this.loadSnapshot.tick && !this.manualCamera) this.resetCamera();
     this.updateTransfers(s, events);
     if (this.city !== s.city) this.buildEnvironment(s.city);
@@ -730,16 +731,34 @@ export class MetroRenderer {
       }
       const a = station(s, t.from),
         b = t.to !== null ? station(s, t.to) : a,
-        position = trackPosition(a, b, t.progress),
+        previous = motion?.previous?.tick === s.tick - 1
+          ? motion.previous.trains.find((train) => train.id === t.id) : undefined,
+        alpha = Math.max(0, Math.min(1, motion?.alpha ?? 1)),
+        continuous = previous && previous.line === t.line && previous.from === t.from && previous.to === t.to && t.to !== null,
+        visualProgress = continuous ? THREE.MathUtils.lerp(previous.progress, t.progress, alpha) : t.progress,
+        position = trackPosition(a, b, visualProgress),
         visible = t.to !== null
-          ? this.lanePosition(this.trackLayout, t.line, t.from, t.to, t.progress, a, b)
-          : position;
-      entry.group.position.set(visible.x, 0.48, visible.y);
-      if (t.to !== null) entry.group.rotation.y = position.angle;
+          ? this.lanePosition(this.trackLayout, t.line, t.from, t.to, visualProgress, a, b)
+          : position,
+        arrived = previous && previous.line === t.line && previous.to === t.from && t.to === null && previous.progress >= 0.8;
+      if (arrived) {
+        const start = station(s, previous.from);
+        const near = this.lanePosition(this.trackLayout, t.line, previous.from, t.from, previous.progress, start, a);
+        entry.group.position.set(THREE.MathUtils.lerp(near.x, a.x, alpha), 0.48,
+          THREE.MathUtils.lerp(near.y, a.y, alpha));
+        if (alpha < 1) entry.group.rotation.y = trackPosition(start, a, previous.progress).angle;
+      } else {
+        entry.group.position.set(visible.x, 0.48, visible.y);
+        if (t.to !== null) entry.group.rotation.y = position.angle;
+      }
       entry.group.visible = true;
     }
     this.previousTrainAnchors = new Map([...this.trains].map(([id, entry]) => [id, entry.group.position.clone()]));
     this.renderer.render(this.scene, this.camera);
+  }
+  projectTrain(id: number): { x: number; y: number } | null {
+    const position = this.trains.get(id)?.group.position;
+    return position ? this.project(position.x, position.z, 0.9) : null;
   }
   project(x: number, y: number, height = 0.6): { x: number; y: number } {
     const v = new THREE.Vector3(x, height, y).project(this.camera);

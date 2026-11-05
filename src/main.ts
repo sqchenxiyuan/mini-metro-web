@@ -380,7 +380,7 @@ function update(): void {
   const s = controller.getState();
   controller.selectedLine = Math.min(controller.selectedLine, s.lines.length - 1);
   lastState = s;
-  renderer.render(s, controller.selectedLine, controller.drainServiceEvents());
+  renderer.render(s, controller.selectedLine, controller.drainServiceEvents(), controller.motion);
   const sk = s.stations.map((p) => `${p.id}:${p.shape}`).join(',');
   if (sk !== stationKey) {
     stationKey = sk;
@@ -440,7 +440,7 @@ function update(): void {
     const a = s.stations.find((p) => p.id === t.from)!,
       b = t.to === null ? a : s.stations.find((p) => p.id === t.to)!,
       position = trackPosition(a, b, t.progress),
-      point = renderer.project(position.x, position.y, 0.9),
+      point = renderer.projectTrain(t.id) ?? renderer.project(position.x, position.y, 0.9),
       capacity = RULES.capacity * (1 + t.carriages);
     badge.style.left = `${point.x}px`;
     badge.style.top = `${point.y}px`;

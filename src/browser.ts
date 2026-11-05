@@ -28,6 +28,14 @@ export class MetroController {
   private failures = 0;
   private last = 0;
   private accumulator = 0;
+  private previousMotion: State | null = null;
+  /** Visual-only one-tick-lag interpolation; never feeds the simulation or replay. */
+  get motion(): { previous: State | null; alpha: number } {
+    // A one-tick-late image needs the preceding state even on frames with no tick.
+    // Reset to the current state whenever simulation cadence skips that pair.
+    return { previous: this.paused || this.player || this.focusedState ? null : this.previousMotion,
+      alpha: this.accumulator };
+  }
   private frame = 0;
   private disposed = false;
   paused = true;
@@ -73,6 +81,7 @@ export class MetroController {
     if (this.player) throw new Error('回放模式不能操作，请返回新局');
     this.takeControl();
     const result = this.session.submit(decision, source);
+    this.previousMotion = null;
     this.onChange();
     return result;
   }
@@ -81,6 +90,7 @@ export class MetroController {
     this.takeControl();
     this.paused = true;
     this.session.step(ticks);
+    this.previousMotion = null;
     this.onChange();
     return this.getState();
   }
@@ -92,6 +102,7 @@ export class MetroController {
       this.focusedDecision = null;
     }
     this.accumulator = 0;
+    this.previousMotion = null;
     this.onChange();
   }
   setSpeed(speed: number): void {
@@ -107,6 +118,7 @@ export class MetroController {
   takeControl(): void {
     this.cancel();
     this.policy = null;
+    this.previousMotion = null;
     this.failures = 0;
     this.onChange();
   }
@@ -121,12 +133,14 @@ export class MetroController {
     this.selectedLine = 0;
     this.paused = true;
     this.accumulator = 0;
+    this.previousMotion = null;
     this.onChange();
   }
   startAgent(policy: Policy = dispatcherPolicy, source = 'dispatcher-baseline'): void {
     if (this.player) throw new Error('请先退出回放');
     this.cancel();
     this.policy = policy;
+    this.previousMotion = null;
     this.source = source;
     this.nextDecision = this.session.tick;
     this.failures = 0;
@@ -151,6 +165,7 @@ export class MetroController {
     this.selectedLine = 0;
     this.paused = true;
     this.accumulator = 0;
+    this.previousMotion = null;
     this.onChange();
   }
   seek(tick: number): State {
@@ -158,6 +173,7 @@ export class MetroController {
     this.focusedState = null;
     this.focusedDecision = null;
     const s = this.player.seek(tick);
+    this.previousMotion = null;
     this.replayTick = s.tick;
     this.onChange();
     return s;
@@ -168,6 +184,7 @@ export class MetroController {
     this.paused = true;
     this.focusedDecision = index;
     this.focusedState = observation.state;
+    this.previousMotion = null;
     this.replayTick = observation.tick;
     this.player!.seek(observation.tick);
     this.onChange();
@@ -184,11 +201,13 @@ export class MetroController {
       policy = this.policy,
       start = performance.now();
     this.pending = controller;
+    this.previousMotion = null;
     this.onChange();
     try {
       const d = await decide(policy, this.session.observe(), 5000, controller.signal);
       if (epoch !== this.epoch || controller.signal.aborted) return;
       const r = this.session.submit(d, this.source, performance.now() - start);
+      this.previousMotion = null;
       this.failures = r.ok ? 0 : this.failures + 1;
     } catch (e) {
       if (epoch !== this.epoch || controller.signal.aborted) return;
@@ -199,6 +218,7 @@ export class MetroController {
         performance.now() - start,
         String(e).slice(0, 2000),
       );
+      this.previousMotion = null;
     } finally {
       if (epoch === this.epoch) {
         this.pending = null;
@@ -233,7 +253,11 @@ export class MetroController {
         this.accumulator += delta * RULES.hz * this.speed;
         const ticks = Math.floor(this.accumulator);
         this.accumulator -= ticks;
-        this.session.step(ticks);
+        if (ticks > 0) {
+          const before = this.session.getState();
+          const advanced = this.session.step(ticks);
+          this.previousMotion = advanced === 1 ? before : null;
+        }
       }
     }
     this.onChange();
