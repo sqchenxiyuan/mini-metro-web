@@ -397,8 +397,7 @@ h1 {
   width: 36px;
   height: 36px;
 }
-.station-label:focus-visible:before,
-.station-label.selected:before {
+.station-label:focus-visible:before {
   content: '';
   position: absolute;
   inset: -10px -7px 7px;

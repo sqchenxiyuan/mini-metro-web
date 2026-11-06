@@ -108,9 +108,10 @@ try {
   await mobile.screenshot({ path: `${output}/mobile.png`, fullPage: true });
   const mobileStation = await mobile.evaluate(() => window.metro.projectStation(1));
   await mobile.touchscreen.tap(mobileStation.x, mobileStation.y);
-  await mobile.locator('#station-detail').waitFor({ state: 'visible' });
-  assert.match(await mobile.locator('#station-detail').innerText(), /人候车/);
-  await mobile.click('#inspector-close');
+  await mobile.locator('#station-peek').waitFor({ state: 'visible' });
+  assert.match(await mobile.locator('#station-peek').innerText(), /人/);
+  assert.equal(await mobile.locator('#inspector').isVisible(), false,
+    'touch inspection should not cover the mobile map');
   await mobile.click('#tools-toggle');
   assert.equal(await mobile.locator('#inspector').isVisible(), true);
   await mobile.click('#inspector-close');
