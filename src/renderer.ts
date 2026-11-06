@@ -294,6 +294,12 @@ function disposeCue(entry: CueEntry): void {
     (label.material as THREE.MeshBasicMaterial).map?.dispose();
     (label.material as THREE.Material).dispose();
   }
+  entry.group.traverse((object) => {
+    if (object instanceof THREE.Line && object.name === 'queue-connector') {
+      object.geometry.dispose();
+      (object.material as THREE.Material).dispose();
+    }
+  });
   entry.group.clear();
 }
 type LoadSnapshot = { tick: number; seed: number };
@@ -510,9 +516,22 @@ export class MetroRenderer {
           level === 'compact' ? p.queue.slice(0, 1) : []).map((passenger) => passenger.shape);
         const extra = level === 'count' ? String(p.queue.length) :
           p.queue.length > shapes.length ? `+${p.queue.length - shapes.length}` : '';
-        place(`queue-${p.id}`, layout.queue.x - local.x, layout.queue.y - local.y,
-          JSON.stringify([level, shapes, extra]), (entry) => {
+        const cueX = layout.queue.x - local.x, cueY = layout.queue.y - local.y;
+        const queueCenter = { x: layout.queue.x + layout.queue.width / 2,
+          y: layout.queue.y + layout.queue.height / 2 };
+        const dx = queueCenter.x - anchor.x, dy = queueCenter.y - anchor.y;
+        const connectorNeeded = this.bounds.width <= 650 && Math.hypot(dx, dy) > 17;
+        place(`queue-${p.id}`, cueX, cueY,
+          JSON.stringify([level, shapes, extra, connectorNeeded]), (entry) => {
             const occupied = shapes.length * 11 + (extra ? Math.min(27, extra.length * 8) : 0);
+            if (connectorNeeded) {
+              const connector = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(), new THREE.Vector3()]),
+                new THREE.LineBasicMaterial({ color: '#716579', transparent: true, opacity: 0.7, depthTest: false }));
+              connector.name = 'queue-connector';
+              connector.renderOrder = 2;
+              entry.group.add(connector);
+            }
             shapes.forEach((shape, index) => entry.group.add(this.cueShape(shape,
               -occupied / 2 + index * 11 + 5.5)));
             if (extra) {
@@ -523,6 +542,15 @@ export class MetroRenderer {
               entry.labels.push(label);
             }
           });
+        if (connectorNeeded) {
+          const connector = this.cueEntries.get(`queue-${p.id}`)!.group.getObjectByName('queue-connector') as THREE.Line;
+          const distance = Math.hypot(dx, dy);
+          const positions = connector.geometry.getAttribute('position') as THREE.BufferAttribute;
+          positions.setXYZ(0, anchor.x - cueX + dx * 13 / distance,
+            anchor.y - cueY + dy * 13 / distance, 0);
+          positions.setXYZ(1, queueCenter.x - cueX, queueCenter.y - cueY, 0);
+          positions.needsUpdate = true;
+        }
       }
       if (p.crowd > 0) {
         const seconds = Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz);

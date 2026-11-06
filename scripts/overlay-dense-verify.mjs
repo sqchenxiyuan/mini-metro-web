@@ -22,6 +22,19 @@ try{
  assert.equal(metrics.badgeStation.length,0,'train hit target must not cover station touch targets');
  assert.equal(metrics.queued,metrics.drawnQueues+Number(metrics.alerts.match(/(\d+) 站候车详情/)?.[1]??0));
  assert.equal(metrics.warned,metrics.drawnWarnings+Number(metrics.alerts.match(/(\d+) 站拥挤/)?.[1]??0));
+ const tapStation=await page.evaluate(()=>window.metro.getState().stations.find(s=>s.queue.length)?.id);
+ await page.locator(`[data-station="${tapStation}"]`).click();
+ assert.equal(await page.locator('#station-peek').isVisible(),true,
+   'tapping a station on mobile must show its actual waiting destinations in map context');
+ assert.match(await page.locator('#station-peek').textContent(),new RegExp(`车站 ${tapStation}\\b.*候车`));
+ const emptyStation=await page.evaluate(()=>window.metro.getState().stations.find(s=>!s.queue.length)?.id);
+ if(emptyStation!==undefined){
+   await page.locator(`[data-station="${emptyStation}"]`).click();
+   assert.equal(await page.locator('#station-peek').isVisible(),true,'empty station tap should still give feedback');
+   assert.match(await page.locator('#station-peek').textContent(),new RegExp(`车站 ${emptyStation}\\b.*候车 0 人`));
+ }
+ assert.equal(await page.locator('#inspector').isVisible(),false,
+   'mobile station tap must not cover the map with the inspector');
  const alert = page.locator('#map-alerts');
  if (await alert.isVisible()) {
    const controls=await page.locator('.left-panel').boundingBox(), a=await alert.boundingBox();

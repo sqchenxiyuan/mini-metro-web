@@ -25,6 +25,22 @@ const intersects = (a: OverlayBox, b: OverlayBox, pad = 2): boolean =>
   a.x < b.x + b.width + pad && a.x + a.width + pad > b.x &&
   a.y < b.y + b.height + pad && a.y + a.height + pad > b.y;
 
+/** Clip a line to an axis-aligned hit target; include its visible border. */
+function crossesBox(ax: number, ay: number, bx: number, by: number, box: OverlayBox): boolean {
+  let near = 0, far = 1;
+  for (const [a, d, low, high] of [
+    [ax, bx - ax, box.x, box.x + box.width],
+    [ay, by - ay, box.y, box.y + box.height],
+  ]) {
+    if (Math.abs(d) < 1e-9) { if (a < low || a > high) return false; continue; }
+    const enter = (low - a) / d, leave = (high - a) / d;
+    near = Math.max(near, Math.min(enter, leave));
+    far = Math.min(far, Math.max(enter, leave));
+    if (near > far) return false;
+  }
+  return true;
+}
+
 /** Display-only, deterministic placement in CSS pixels; never writes to game state. */
 export function layoutOverlays(stations: readonly OverlayStation[], viewport: { width: number; height: number },
   mobile = false, reserved: readonly OverlayBox[] = []): OverlayPlacement[] {
@@ -117,6 +133,12 @@ export function layoutSceneCues(stations: readonly OverlayStation[],
       if (box.x < 4 || box.y < 4 || box.x + box.width > viewport.width - 4 ||
         box.y + box.height > viewport.height - 4 || blocked.some((other) => intersects(box, other)) ||
         hits.some((hit) => hit.id !== p.id && intersects(box, hit.box))) continue;
+      if (mobile && level && Math.hypot(dx, dy) > 17) {
+        const distance = Math.hypot(dx, dy);
+        const startX = p.x + dx * 13 / distance, startY = p.y + dy * 13 / distance;
+        if (hits.some((hit) => hit.id !== p.id && crossesBox(startX, startY,
+          p.x + dx, p.y + dy, hit.box))) continue;
+      }
       blocked.push(box);
       return box;
     }
@@ -124,12 +146,28 @@ export function layoutSceneCues(stations: readonly OverlayStation[],
   };
   const ordered = [...stations].sort((a, b) => Number(b.selected) - Number(a.selected) ||
     b.crowd - a.crowd || a.id - b.id);
-  for (const p of ordered) if (p.crowd > 0) {
+  // On a phone the destination silhouettes are the primary game information.
+  // A crowded station already has its ring and the global alert if its verbose
+  // countdown cannot fit; allocate the small adjacent queue marks first.
+  if (mobile) for (const p of ordered) if (p.selected && p.crowd > 0) {
     const entry = result.get(p.id)!;
     entry.warning = place(p, warningCueBounds, warningCenters);
     entry.warningFallback = !entry.warning;
   }
-  for (const p of ordered) if (p.queue > 0) {
+  if (mobile) for (const p of ordered) if (p.queue > 0) {
+    const entry = result.get(p.id)!;
+    for (const level of ['full', 'compact', 'count'] as const) {
+      entry.queue = place(p, queueCueBounds(p.queue, level), queueCenters, level);
+      if (entry.queue) break;
+    }
+    entry.queueFallback = !entry.queue;
+  }
+  for (const p of ordered) if (p.crowd > 0 && !result.get(p.id)!.warning) {
+    const entry = result.get(p.id)!;
+    entry.warning = place(p, warningCueBounds, warningCenters);
+    entry.warningFallback = !entry.warning;
+  }
+  if (!mobile) for (const p of ordered) if (p.queue > 0) {
     const entry = result.get(p.id)!;
     for (const level of ['full', 'compact', 'count'] as const) {
       entry.queue = place(p, queueCueBounds(p.queue, level), queueCenters, level);

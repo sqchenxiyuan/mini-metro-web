@@ -92,10 +92,37 @@ describe('station scene cues', () => {
     expect(JSON.stringify(state)).toBe(snapshot);
     renderer.dispose();
   });
+  it('keeps the station ring and tap target visibly aligned with the owning queue on mobile', () => {
+    const { renderer, state, update, cues } = setup(390, 708);
+    const p = state.stations[0];
+    p.queue = [{ id: 1, shape: 'triangle', born: 0, transfers: 0 }];
+    p.crowd = 0;
+    const placed = update().find((entry) => entry.id === p.id)!;
+    const position = renderer.project(p.x, p.y, 0.6);
+    expect(placed.queue).not.toBeNull();
+    const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
+    const icon = queue.children.find((child) => child.userData.shape === 'triangle') as THREE.Mesh;
+    expect(icon).toBeDefined();
+    cues().updateMatrixWorld(true);
+    const actual = new THREE.Box3().setFromObject(icon);
+    expect(Math.abs((actual.min.x + actual.max.x) / 2 - position.x)).toBeLessThanOrEqual(36);
+    expect(Math.abs((actual.min.y + actual.max.y) / 2 - position.y)).toBeLessThanOrEqual(36);
+    const connector = queue.getObjectByName('queue-connector') as THREE.Line;
+    expect(connector).toBeDefined();
+    cues().updateMatrixWorld(true);
+    const ends = connector.geometry.getAttribute('position');
+    const start = new THREE.Vector3().fromBufferAttribute(ends, 0).applyMatrix4(connector.matrixWorld);
+    const end = new THREE.Vector3().fromBufferAttribute(ends, 1).applyMatrix4(connector.matrixWorld);
+    const queueCenter = { x: placed.queue!.x + placed.queue!.width / 2,
+      y: placed.queue!.y + placed.queue!.height / 2 };
+    expect(Math.hypot(start.x - position.x, start.y - position.y)).toBeLessThanOrEqual(18);
+    expect(Math.hypot(end.x - queueCenter.x, end.y - queueCenter.y)).toBeLessThanOrEqual(11);
+    renderer.dispose();
+  });
+
   it('contains projected mesh and texture geometry inside placed rectangles, not guessed cards', () => {
     const { renderer, state, update, cues } = setup();
     const p = state.stations[0];
-    p.queue = Array.from({ length: 31 }, (_, id) => ({ id, shape: 'star' as const, born: 0, transfers: 0 }));
     const placement = update().find((item) => item.id === p.id)!;
     for (const [kind, box] of [['queue', placement.queue], ['warning', placement.warning]] as const) {
       expect(box).not.toBeNull();
@@ -103,11 +130,50 @@ describe('station scene cues', () => {
       const mesh = kind === 'warning' ? group.getObjectByName('warning-detail')! : group;
       cues().updateMatrixWorld(true);
       const actual = new THREE.Box3().setFromObject(mesh);
+      if (kind === 'queue' && group.getObjectByName('queue-connector')) {
+        const body = new THREE.Box3();
+        group.traverse((child) => {
+          if (child instanceof THREE.Mesh) body.expandByObject(child);
+        });
+        expect(body.min.x).toBeGreaterThanOrEqual(box!.x - 0.01);
+        expect(body.max.x).toBeLessThanOrEqual(box!.x + box!.width + 0.01);
+        expect(body.min.y).toBeGreaterThanOrEqual(box!.y - 0.01);
+        expect(body.max.y).toBeLessThanOrEqual(box!.y + box!.height + 0.01);
+        continue;
+      }
       expect(actual.min.x).toBeGreaterThanOrEqual(box!.x - 0.01);
       expect(actual.max.x).toBeLessThanOrEqual(box!.x + box!.width + 0.01);
       expect(actual.min.y).toBeGreaterThanOrEqual(box!.y - 0.01);
       expect(actual.max.y).toBeLessThanOrEqual(box!.y + box!.height + 0.01);
     }
+    renderer.dispose();
+  });
+  it('does not reupload queue text when its screen position changes without changing passengers', () => {
+    const { renderer, state, update } = setup(390, 708);
+    state.stations[0].queue = Array.from({ length: 4 }, (_, id) => ({
+      id: id + 1, shape: 'triangle' as const, born: 0, transfers: 0,
+    }));
+    const placed = update();
+    const count = canvases.length;
+    const shifted = placed.map((item) => item.queue ? {
+      ...item, queue: { ...item.queue, x: item.queue.x + 0.5, y: item.queue.y + 0.5 },
+    } : item);
+    const originalConnector = (renderer as unknown as { sceneCues: THREE.Scene }).sceneCues
+      .getObjectByName(`queue-${state.stations[0].id}`)?.getObjectByName('queue-connector') as THREE.Line;
+    const before = originalConnector?.geometry.getAttribute('position').getY(0);
+    renderer.updateSceneCues(state, shifted);
+    expect(canvases).toHaveLength(count);
+    if (originalConnector) expect(originalConnector.geometry.getAttribute('position').getY(0)).not.toBe(before);
+    renderer.dispose();
+  });
+  it('leaves desktop cue geometry without mobile connector lines', () => {
+    const { renderer, state, update, cues } = setup(800, 708);
+    state.stations[0].queue = Array.from({ length: 3 }, (_, id) => ({
+      id, shape: 'triangle' as const, born: 0, transfers: 0,
+    }));
+    const placed = update().find((item) => item.id === state.stations[0].id)!;
+    expect(placed.queue).not.toBeNull();
+    expect(cues().getObjectByName(`queue-${state.stations[0].id}`)?.getObjectByName('queue-connector')).toBeUndefined();
     renderer.dispose();
   });
   it('draws a four-digit passenger count without clipping the canvas text', () => {
@@ -127,7 +193,9 @@ describe('station scene cues', () => {
   it('reprojects on zoom and replay without stale cues, reuses geometry and uploads text only on change', () => {
     const { renderer, state, update, cues } = setup();
     const p = state.stations[0];
-    p.queue.push({ id: 1002, shape: 'circle', born: 0, transfers: 0 });
+    p.queue.push({ id: 1002, shape: 'circle', born: 0, transfers: 0 },
+      { id: 1003, shape: 'square', born: 0, transfers: 0 },
+      { id: 1004, shape: 'triangle', born: 0, transfers: 0 });
     update();
     const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
     const warning = cues().getObjectByName(`warning-${p.id}`) as THREE.Group;
@@ -146,7 +214,11 @@ describe('station scene cues', () => {
     update();
     expect(queue.position.x).not.toBe(originalX);
     expect((queue.children.find((child) => child.userData.shape === 'triangle') as THREE.Mesh).geometry).toBe(geometry);
-    expect(canvases).toHaveLength(count);
+    // A zoom may move the queue to a different level (full/compact/count),
+    // legitimately creating a new label texture even without a state change.
+    const afterZoom = canvases.length;
+    update();
+    expect(canvases).toHaveLength(afterZoom);
     p.crowd += RULES.hz;
     update();
     expect(disposed).toHaveBeenCalledOnce();

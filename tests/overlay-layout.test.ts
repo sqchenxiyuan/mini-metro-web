@@ -6,6 +6,44 @@ const overlaps = (a: { x: number; y: number; width: number; height: number },
   a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 
 describe('anchored WebGL cue placement', () => {
+  it('never routes a mobile queue connector through another station hit target', () => {
+    const stations = [{ id: 1, x: 170, y: 170, queue: 12, crowd: 0, selected: false },
+      { id: 2, x: 150, y: 150, queue: 8, crowd: 0, selected: false }];
+    const placed = layoutSceneCues(stations, { width: 390, height: 708 });
+    const cue = placed[0].queue;
+    expect(cue).not.toBeNull();
+    const center = { x: cue!.x + cue!.width / 2, y: cue!.y + cue!.height / 2 };
+    const delta = { x: center.x - 170, y: center.y - 170 };
+    const distance = Math.hypot(delta.x, delta.y);
+    const other = { x: 128, y: 145, width: 44, height: 44 };
+    // A near-station cue has no connector; otherwise sample the actual segment.
+    if (distance > 17) {
+      const start = { x: 170 + delta.x * 13 / distance, y: 170 + delta.y * 13 / distance };
+      for (let i = 0; i <= 20; i++) {
+        const x = start.x + (center.x - start.x) * i / 20;
+        const y = start.y + (center.y - start.y) * i / 20;
+        expect(x >= other.x && x <= other.x + other.width && y >= other.y && y <= other.y + other.height)
+          .toBe(false);
+      }
+    }
+  });
+  it('preserves destination shapes ahead of warning text on a populated phone map', () => {
+    // Seed 420, week 4, 390px: most stations are crowded and have queues.
+    const points = [[1,125,380,30],[2,178,338,29],[3,257,391,29],[10,150,320,28],
+      [23,191,385,26],[36,287,344,24],[53,342,395,21],[77,244,316,15],
+      [102,86,394,13],[125,357,344,12],[147,326,302,10],[184,175,432,6],
+      [214,92,293,3],[255,226,291,0]];
+    const stations = points.map(([id,x,y,queue]) => ({ id, x, y, queue,
+      crowd: id === 184 || id === 214 || id === 255 ? 0 : 2250, selected: false }));
+    const placed = layoutSceneCues(stations, { width: 390, height: 708 });
+    expect(placed.filter((p) => p.queue?.level === 'full' || p.queue?.level === 'compact').length)
+      .toBeGreaterThanOrEqual(6);
+    for (const item of placed) for (const cue of [item.queue, item.warning]) if (cue) {
+      const owner = stations.find((p) => p.id === item.id)!;
+      expect(Math.hypot(cue.x + cue.width / 2 - owner.x,
+        cue.y + cue.height / 2 - owner.y)).toBeLessThanOrEqual(36);
+    }
+  });
   it('avoids all station touch rectangles and other actual cue bounds at phone density', () => {
     const stations = Array.from({ length: 16 }, (_, i) => ({ id: i + 1,
       x: 75 + (i % 4) * 35, y: 180 + Math.floor(i / 4) * 42,

@@ -332,7 +332,17 @@ stage.addEventListener('pointermove', (e) => {
   preview();
 });
 function finishDraw(): void {
-  if (pointerStation !== null && !moved) setTab(false);
+  if (pointerStation !== null && !moved) {
+    if (stage.getBoundingClientRect().width > 650) setTab(false);
+    else setInspector(false);
+    const station = controller.getState().stations.find((p) => p.id === pointerStation);
+    if (station && stage.getBoundingClientRect().width <= 650) {
+      const shapes = SHAPES.map((shape) => ({ shape, n: station.queue.filter((v) => v.shape === shape).length }))
+        .filter((item) => item.n).map((item) => `${GLYPHS[item.shape]}×${item.n}`).join(' ');
+      $('station-peek').textContent = `车站 ${station.id} · 候车 ${station.queue.length} 人${shapes ? `：${shapes}` : ''}${station.crowd ? ` · 拥挤 ${Math.ceil(station.crowd / RULES.hz)} 秒` : ''}`;
+      $('station-peek').hidden = false;
+    }
+  }
   if (draft && moved && draft.length >= 2) {
     const first = !controller.getState().lines.some((l) => l.stops.length);
     if (
