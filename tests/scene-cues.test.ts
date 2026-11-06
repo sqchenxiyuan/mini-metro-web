@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { RULES, createState } from '../src/rules';
-import { layoutSceneCues, queueCueBounds, warningCueBounds } from '../src/overlay-layout';
+import { layoutSceneCues, queueCueBounds } from '../src/overlay-layout';
 import { MetroRenderer } from '../src/renderer';
 
 vi.mock('three', async (original) => {
@@ -61,30 +61,23 @@ describe('station scene cues', () => {
     const snapshot = JSON.stringify(state);
     const placement = update().find((p) => p.id === state.stations[0].id)!;
     expect(placement.queue).not.toBeNull();
-    expect(placement.warning).not.toBeNull();
+    expect(placement.warning).toBeNull();
     const queue = cues().getObjectByName(`queue-${state.stations[0].id}`) as THREE.Group;
     const warning = cues().getObjectByName(`warning-${state.stations[0].id}`) as THREE.Group;
     expect(queue).toBeInstanceOf(THREE.Group);
     expect(warning).toBeInstanceOf(THREE.Group);
-    const qBounds = queueCueBounds(state.stations[0].queue.length, placement.queue!.level!);
-    const wBounds = warningCueBounds;
+    const qBounds = queueCueBounds(state.stations[0].queue.length, placement.queue!.level!, true);
     expect(queue.position.x + qBounds.x).toBeCloseTo(placement.queue!.x);
     expect(queue.position.y + qBounds.y).toBeCloseTo(placement.queue!.y);
     expect(queue.children.some((child) => child.userData.shape === 'triangle')).toBe(true);
-    const symbol = warning.getObjectByName('warning-detail') as THREE.Group;
     expect(warning.position.x).toBeCloseTo(renderer.project(state.stations[0].x, state.stations[0].y).x);
-    expect(warning.position.y).toBeCloseTo(renderer.project(state.stations[0].x, state.stations[0].y).y);
-    expect(warning.position.x + symbol.position.x + wBounds.x).toBeCloseTo(placement.warning!.x);
-    expect(warning.position.y + symbol.position.y + wBounds.y).toBeCloseTo(placement.warning!.y);
     expect(warning.children.some((child) => child.name === 'warning-ring')).toBe(true);
-    expect(warning.getObjectByName('warning-symbol')).toBeTruthy();
-    expect(renderer.cueStats()).toMatchObject({ queueCount: 1, warningCount: 1, ringCount: 1,
-      queueStationIds: [state.stations[0].id], warningStationIds: [state.stations[0].id] });
+    expect(warning.getObjectByName('warning-symbol')).toBeUndefined();
+    expect(renderer.cueStats()).toMatchObject({ queueCount: 1, warningCount: 0, ringCount: 1,
+      queueStationIds: [state.stations[0].id], warningStationIds: [] });
     expect(renderer.cueStats().bounds).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: state.stations[0].id, kind: 'queue',
         x: placement.queue!.x, y: placement.queue!.y }),
-      expect.objectContaining({ id: state.stations[0].id, kind: 'warning',
-        x: placement.warning!.x, y: placement.warning!.y }),
     ]));
     expect(cues().children.some((child) => child instanceof THREE.Mesh && child.geometry instanceof THREE.PlaneGeometry)).toBe(false);
     expect(webgl().clearDepth).toHaveBeenCalled();
@@ -92,31 +85,26 @@ describe('station scene cues', () => {
     expect(JSON.stringify(state)).toBe(snapshot);
     renderer.dispose();
   });
-  it('keeps the station ring and tap target visibly aligned with the owning queue on mobile', () => {
+  it('renders every real mobile passenger shape in stacked rows, with no count, connector or drifting warning text', () => {
     const { renderer, state, update, cues } = setup(390, 708);
     const p = state.stations[0];
-    p.queue = [{ id: 1, shape: 'triangle', born: 0, transfers: 0 }];
-    p.crowd = 0;
+    p.queue = Array.from({ length: 12 }, (_, i) => ({ id: i + 1,
+      shape: i % 2 ? 'circle' as const : 'triangle' as const, born: 0, transfers: 0 }));
+    p.crowd = RULES.hz;
     const placed = update().find((entry) => entry.id === p.id)!;
-    const position = renderer.project(p.x, p.y, 0.6);
     expect(placed.queue).not.toBeNull();
+    expect(placed.warning).toBeNull();
     const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
-    const icon = queue.children.find((child) => child.userData.shape === 'triangle') as THREE.Mesh;
-    expect(icon).toBeDefined();
-    cues().updateMatrixWorld(true);
-    const actual = new THREE.Box3().setFromObject(icon);
-    expect(Math.abs((actual.min.x + actual.max.x) / 2 - position.x)).toBeLessThanOrEqual(36);
-    expect(Math.abs((actual.min.y + actual.max.y) / 2 - position.y)).toBeLessThanOrEqual(36);
-    const connector = queue.getObjectByName('queue-connector') as THREE.Line;
-    expect(connector).toBeDefined();
-    cues().updateMatrixWorld(true);
-    const ends = connector.geometry.getAttribute('position');
-    const start = new THREE.Vector3().fromBufferAttribute(ends, 0).applyMatrix4(connector.matrixWorld);
-    const end = new THREE.Vector3().fromBufferAttribute(ends, 1).applyMatrix4(connector.matrixWorld);
-    const queueCenter = { x: placed.queue!.x + placed.queue!.width / 2,
-      y: placed.queue!.y + placed.queue!.height / 2 };
-    expect(Math.hypot(start.x - position.x, start.y - position.y)).toBeLessThanOrEqual(18);
-    expect(Math.hypot(end.x - queueCenter.x, end.y - queueCenter.y)).toBeLessThanOrEqual(11);
+    const icons = queue.children.filter((child) => child.userData.shape);
+    expect(icons.map((icon) => icon.userData.passengerId)).toEqual(p.queue.map((v) => v.id));
+    expect(icons.map((icon) => icon.userData.shape)).toEqual(p.queue.map((v) => v.shape));
+    expect(new Set(icons.map((icon) => icon.position.y)).size).toBeGreaterThan(1);
+    expect(queue.getObjectByName('queue-connector')).toBeUndefined();
+    expect(queue.children.some((child) => child instanceof THREE.Mesh &&
+      (child.material as THREE.MeshBasicMaterial).map)).toBe(false);
+    const warning = cues().getObjectByName(`warning-${p.id}`)!;
+    expect(warning.getObjectByName('warning-ring')).toBeTruthy();
+    expect(warning.getObjectByName('warning-detail')).toBeUndefined();
     renderer.dispose();
   });
 
@@ -124,46 +112,31 @@ describe('station scene cues', () => {
     const { renderer, state, update, cues } = setup();
     const p = state.stations[0];
     const placement = update().find((item) => item.id === p.id)!;
-    for (const [kind, box] of [['queue', placement.queue], ['warning', placement.warning]] as const) {
-      expect(box).not.toBeNull();
-      const group = cues().getObjectByName(`${kind}-${p.id}`)!;
-      const mesh = kind === 'warning' ? group.getObjectByName('warning-detail')! : group;
-      cues().updateMatrixWorld(true);
-      const actual = new THREE.Box3().setFromObject(mesh);
-      if (kind === 'queue' && group.getObjectByName('queue-connector')) {
-        const body = new THREE.Box3();
-        group.traverse((child) => {
-          if (child instanceof THREE.Mesh) body.expandByObject(child);
-        });
-        expect(body.min.x).toBeGreaterThanOrEqual(box!.x - 0.01);
-        expect(body.max.x).toBeLessThanOrEqual(box!.x + box!.width + 0.01);
-        expect(body.min.y).toBeGreaterThanOrEqual(box!.y - 0.01);
-        expect(body.max.y).toBeLessThanOrEqual(box!.y + box!.height + 0.01);
-        continue;
-      }
-      expect(actual.min.x).toBeGreaterThanOrEqual(box!.x - 0.01);
-      expect(actual.max.x).toBeLessThanOrEqual(box!.x + box!.width + 0.01);
-      expect(actual.min.y).toBeGreaterThanOrEqual(box!.y - 0.01);
-      expect(actual.max.y).toBeLessThanOrEqual(box!.y + box!.height + 0.01);
-    }
+    expect(placement.queue).not.toBeNull();
+    const queue = cues().getObjectByName(`queue-${p.id}`)!;
+    cues().updateMatrixWorld(true);
+    const actual = new THREE.Box3().setFromObject(queue);
+    expect(actual.min.x).toBeGreaterThanOrEqual(placement.queue!.x - 0.01);
+    expect(actual.max.x).toBeLessThanOrEqual(placement.queue!.x + placement.queue!.width + 0.01);
+    expect(actual.min.y).toBeGreaterThanOrEqual(placement.queue!.y - 0.01);
+    expect(actual.max.y).toBeLessThanOrEqual(placement.queue!.y + placement.queue!.height + 0.01);
+    expect(placement.warning).toBeNull();
+    expect(cues().getObjectByName(`warning-${p.id}`)?.getObjectByName('warning-ring')).toBeTruthy();
     renderer.dispose();
   });
   it('does not reupload queue text when its screen position changes without changing passengers', () => {
-    const { renderer, state, update } = setup(390, 708);
+    const { renderer, state, update, cues } = setup(390, 708);
     state.stations[0].queue = Array.from({ length: 4 }, (_, id) => ({
       id: id + 1, shape: 'triangle' as const, born: 0, transfers: 0,
     }));
     const placed = update();
-    const count = canvases.length;
     const shifted = placed.map((item) => item.queue ? {
       ...item, queue: { ...item.queue, x: item.queue.x + 0.5, y: item.queue.y + 0.5 },
     } : item);
-    const originalConnector = (renderer as unknown as { sceneCues: THREE.Scene }).sceneCues
-      .getObjectByName(`queue-${state.stations[0].id}`)?.getObjectByName('queue-connector') as THREE.Line;
-    const before = originalConnector?.geometry.getAttribute('position').getY(0);
+    const count = canvases.length;
     renderer.updateSceneCues(state, shifted);
     expect(canvases).toHaveLength(count);
-    if (originalConnector) expect(originalConnector.geometry.getAttribute('position').getY(0)).not.toBe(before);
+    expect(cues().getObjectByName(`queue-${state.stations[0].id}`)?.getObjectByName('queue-connector')).toBeUndefined();
     renderer.dispose();
   });
   it('leaves desktop cue geometry without mobile connector lines', () => {
@@ -176,18 +149,14 @@ describe('station scene cues', () => {
     expect(cues().getObjectByName(`queue-${state.stations[0].id}`)?.getObjectByName('queue-connector')).toBeUndefined();
     renderer.dispose();
   });
-  it('draws a four-digit passenger count without clipping the canvas text', () => {
+  it('omits an oversized mobile pile rather than drawing a four-digit count', () => {
     const { renderer, state, update, cues } = setup();
     state.stations[0].queue = Array.from({ length: 1200 }, (_, i) => ({
       id: i + 1, shape: 'triangle' as const, born: 0, transfers: 0,
     }));
     const box = update().find((p) => p.id === state.stations[0].id)!.queue;
-    expect(box).not.toBeNull();
-    const queue = cues().getObjectByName(`queue-${state.stations[0].id}`) as THREE.Group;
-    const count = queue.children.find((child) => child instanceof THREE.Mesh &&
-      (child.material as THREE.MeshBasicMaterial).map) as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
-    expect(count).toBeDefined();
-    expect(count.material.map!.image.width).toBeGreaterThan(64);
+    expect(box).toBeNull();
+    expect(cues().getObjectByName(`queue-${state.stations[0].id}`)).toBeUndefined();
     renderer.dispose();
   });
   it('reprojects on zoom and replay without stale cues, reuses geometry and uploads text only on change', () => {
@@ -198,13 +167,9 @@ describe('station scene cues', () => {
       { id: 1004, shape: 'triangle', born: 0, transfers: 0 });
     update();
     const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
-    const warning = cues().getObjectByName(`warning-${p.id}`) as THREE.Group;
     const originalX = queue.position.x;
     const icon = queue.children.find((child) => child.userData.shape === 'triangle') as THREE.Mesh;
     const geometry = icon.geometry;
-    const texture = (warning.getObjectByName('warning-detail')!.children.find((child) => child instanceof THREE.Mesh &&
-      (child.material as THREE.MeshBasicMaterial).map) as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>).material.map!;
-    const disposed = vi.spyOn(texture, 'dispose');
     const count = canvases.length;
     update();
     expect(cues().getObjectByName(`queue-${p.id}`)).toBe(queue);
@@ -214,14 +179,12 @@ describe('station scene cues', () => {
     update();
     expect(queue.position.x).not.toBe(originalX);
     expect((queue.children.find((child) => child.userData.shape === 'triangle') as THREE.Mesh).geometry).toBe(geometry);
-    // A zoom may move the queue to a different level (full/compact/count),
-    // legitimately creating a new label texture even without a state change.
     const afterZoom = canvases.length;
     update();
     expect(canvases).toHaveLength(afterZoom);
     p.crowd += RULES.hz;
     update();
-    expect(disposed).toHaveBeenCalledOnce();
+    expect(canvases).toHaveLength(afterZoom);
     state.tick = 100;
     p.queue = [];
     p.crowd = 0;
@@ -234,6 +197,16 @@ describe('station scene cues', () => {
     renderer.dispose();
     expect(geometry).toBeDefined();
   });
+  it('reuses the mobile warning ring as crowd time changes and selection moves', () => {
+    const { renderer, state, update, cues } = setup(390, 708);
+    update();
+    const id = state.stations[0].id;
+    const ring = cues().getObjectByName(`warning-${id}`)?.getObjectByName('warning-ring');
+    state.stations[0].crowd += RULES.hz;
+    update();
+    expect(cues().getObjectByName(`warning-${id}`)?.getObjectByName('warning-ring')).toBe(ring);
+    renderer.dispose();
+  });
   it('keeps mobile cue marks bounded and suppresses fallback marks instead of drawing detached warnings', () => {
     const { renderer, state, update, cues } = setup(320, 600);
     const p = state.stations[0];
@@ -241,7 +214,7 @@ describe('station scene cues', () => {
     update();
     const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
     const bounds = new THREE.Box3().setFromObject(queue);
-    expect(bounds.max.x - bounds.min.x).toBeLessThanOrEqual(62);
+    expect(bounds.max.x - bounds.min.x).toBeLessThanOrEqual(66);
     const omitted = state.stations.map((station) => ({ id: station.id, queue: null, warning: null,
       queueFallback: true, warningFallback: true }));
     renderer.updateSceneCues(state, omitted);

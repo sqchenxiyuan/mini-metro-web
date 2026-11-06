@@ -258,11 +258,6 @@ function drawPassengers(group: THREE.Group, passengers: State['trains'][number][
     group.add(icon);
   });
 }
-function disposeBadge(badge: THREE.Sprite): void {
-  (badge.material as THREE.SpriteMaterial).map?.dispose();
-  badge.material.dispose();
-}
-
 type CueEntry = { group: THREE.Group; signature: string; labels: THREE.Mesh[] };
 const CUE_COLORS: Record<Shape, string> = {
   circle: '#a44c77', triangle: '#347c70', square: '#6c4c99', diamond: '#316b9d',
@@ -303,34 +298,6 @@ function disposeCue(entry: CueEntry): void {
   entry.group.clear();
 }
 type LoadSnapshot = { tick: number; seed: number };
-type Transfer = { sprite: THREE.Sprite; start: THREE.Vector3; end: THREE.Vector3; tick: number };
-function transferMarker(shape: Shape): THREE.Sprite {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 64;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#fffaf6';
-  ctx.strokeStyle = '#283248';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(32, 32, 29, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  const points = stationOutline(shape, 19).getPoints(28);
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    if (i) ctx.lineTo(32 + p.x, 32 - p.y);
-    else ctx.moveTo(32 + p.x, 32 - p.y);
-  });
-  ctx.closePath();
-  ctx.fillStyle = '#3e5877';
-  ctx.fill();
-  const map = new THREE.CanvasTexture(canvas);
-  map.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
-  sprite.scale.set(0.7, 0.7, 1);
-  sprite.renderOrder = 21;
-  return sprite;
-}
 export class MetroRenderer {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
@@ -354,7 +321,6 @@ export class MetroRenderer {
   private warningDotGeometry = new THREE.PlaneGeometry(1.6, 1.6);
   private warningMaterial = new THREE.MeshBasicMaterial({ color: '#dc7136', side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false });
   private warningInk = new THREE.MeshBasicMaterial({ color: '#392538', side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false });
-  private activeTransfers: Transfer[] = [];
   private loadSnapshot: LoadSnapshot | null = null;
   private city: City | null = null;
   private routeKey = '';
@@ -403,7 +369,7 @@ export class MetroRenderer {
     sun.shadow.normalBias = 0.04;
     sun.shadow.radius = 3;
     this.scene.add(sun);
-    this.scene.add(this.environment, this.tracks, this.preview, this.transfers);
+    this.scene.add(this.environment, this.tracks, this.preview);
     this.cueCamera.position.z = 10;
     this.camera.position.set(0, 32, 24);
     this.camera.lookAt(0, 0, 0);
@@ -511,27 +477,28 @@ export class MetroRenderer {
       const anchor = this.project(p.x, p.y, 0.6);
       if (layout?.queue && p.queue.length) {
         const level = layout.queue.level ?? 'full';
-        const local = queueCueBounds(p.queue.length, level);
-        const shapes = (level === 'full' ? p.queue.slice(0, 3) :
-          level === 'compact' ? p.queue.slice(0, 1) : []).map((passenger) => passenger.shape);
-        const extra = level === 'count' ? String(p.queue.length) :
+        const mobile = this.bounds.width <= 650;
+        const local = queueCueBounds(p.queue.length, level, mobile);
+        const passengers = mobile ? p.queue : level === 'full' ? p.queue.slice(0, 3) :
+          level === 'compact' ? p.queue.slice(0, 1) : [];
+        const shapes = passengers.map((passenger) => passenger.shape);
+        const extra = mobile ? '' : level === 'count' ? String(p.queue.length) :
           p.queue.length > shapes.length ? `+${p.queue.length - shapes.length}` : '';
         const cueX = layout.queue.x - local.x, cueY = layout.queue.y - local.y;
-        const queueCenter = { x: layout.queue.x + layout.queue.width / 2,
-          y: layout.queue.y + layout.queue.height / 2 };
-        const dx = queueCenter.x - anchor.x, dy = queueCenter.y - anchor.y;
-        const connectorNeeded = this.bounds.width <= 650 && Math.hypot(dx, dy) > 17;
         place(`queue-${p.id}`, cueX, cueY,
-          JSON.stringify([level, shapes, extra, connectorNeeded]), (entry) => {
-            const occupied = shapes.length * 11 + (extra ? Math.min(27, extra.length * 8) : 0);
-            if (connectorNeeded) {
-              const connector = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(), new THREE.Vector3()]),
-                new THREE.LineBasicMaterial({ color: '#716579', transparent: true, opacity: 0.7, depthTest: false }));
-              connector.name = 'queue-connector';
-              connector.renderOrder = 2;
-              entry.group.add(connector);
+          JSON.stringify([mobile, level, mobile ? passengers.map((v) => [v.id, v.shape]) : shapes, extra]), (entry) => {
+            if (mobile) {
+              passengers.forEach((passenger, index) => {
+                const icon = this.cueShape(passenger.shape,
+                  -Math.min(6, passengers.length - Math.floor(index / 6) * 6) * 11 / 2 +
+                  (index % 6) * 11 + 5.5);
+                icon.position.y = Math.floor(index / 6) * 12;
+                icon.userData.passengerId = passenger.id;
+                entry.group.add(icon);
+              });
+              return;
             }
+            const occupied = shapes.length * 11 + (extra ? Math.min(27, extra.length * 8) : 0);
             shapes.forEach((shape, index) => entry.group.add(this.cueShape(shape,
               -occupied / 2 + index * 11 + 5.5)));
             if (extra) {
@@ -542,21 +509,12 @@ export class MetroRenderer {
               entry.labels.push(label);
             }
           });
-        if (connectorNeeded) {
-          const connector = this.cueEntries.get(`queue-${p.id}`)!.group.getObjectByName('queue-connector') as THREE.Line;
-          const distance = Math.hypot(dx, dy);
-          const positions = connector.geometry.getAttribute('position') as THREE.BufferAttribute;
-          positions.setXYZ(0, anchor.x - cueX + dx * 13 / distance,
-            anchor.y - cueY + dy * 13 / distance, 0);
-          positions.setXYZ(1, queueCenter.x - cueX, queueCenter.y - cueY, 0);
-          positions.needsUpdate = true;
-        }
       }
       if (p.crowd > 0) {
         const seconds = Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz);
-        const compact = !layout?.warning;
+        const compact = this.bounds.width <= 650 || !layout?.warning;
         place(`warning-${p.id}`, anchor.x, anchor.y,
-          `${seconds}:${compact}`, (entry) => {
+          this.bounds.width <= 650 ? 'ring-only' : `${seconds}:${compact}`, (entry) => {
             const ring = new THREE.Mesh(this.warningRingGeometry, this.warningMaterial);
             ring.name = 'warning-ring';
             ring.position.z = 0.5;
@@ -797,53 +755,10 @@ export class MetroRenderer {
   clearPreview(): void {
     disposeGroup(this.preview);
   }
-  private clearTransfers(): void {
-    for (const { sprite } of this.activeTransfers) disposeBadge(sprite);
-    this.activeTransfers = [];
-    this.transfers.clear();
-  }
   private updateTransfers(s: State, _events?: readonly ServiceEvent[]): void {
-    const previous = this.loadSnapshot;
-    const current: LoadSnapshot = { tick: s.tick, seed: s.seed };
-    const delta = previous ? s.tick - previous.tick : 0;
-    if (!previous || previous.seed !== s.seed || delta < 0 || delta > 8) this.clearTransfers();
-    const active = new Set<number>();
-    for (const t of s.trains) {
-      if (!t.transfer) continue;
-      const moving = t.transfer, passenger = moving.passenger;
-      active.add(t.id);
-      const p = s.stations.find((item) => item.id === moving.stationId);
-      if (!p) continue;
-      const waiting = new THREE.Vector3(p.x - 0.85, 1.05, p.y + 0.55);
-      const door = new THREE.Vector3(p.x, 1.14, p.y);
-      let transfer = this.activeTransfers.find((item) => item.sprite.userData.trainId === t.id);
-      if (!transfer || transfer.sprite.userData.passengerId !== passenger.id ||
-          transfer.sprite.userData.direction !== moving.direction ||
-          transfer.sprite.userData.stationId !== moving.stationId) {
-        if (transfer) {
-          this.transfers.remove(transfer.sprite);
-          disposeBadge(transfer.sprite);
-          this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
-        }
-        const sprite = transferMarker(passenger.shape);
-        sprite.userData = { passengerId: passenger.id, trainId: t.id,
-          stationId: moving.stationId, direction: moving.direction };
-        this.transfers.add(sprite);
-        transfer = { sprite, start: moving.direction === 'board' ? waiting : door,
-          end: moving.direction === 'board' ? door : waiting, tick: s.tick };
-        this.activeTransfers.push(transfer);
-      }
-      const phase = Math.max(0, Math.min(1, moving.progress / moving.duration));
-      const eased = phase * phase * (3 - 2 * phase);
-      transfer.sprite.position.copy(transfer.start).lerp(transfer.end, eased);
-      transfer.sprite.position.y += Math.sin(Math.PI * phase) * 0.14;
-    }
-    for (const transfer of [...this.activeTransfers]) if (!active.has(transfer.sprite.userData.trainId)) {
-      this.transfers.remove(transfer.sprite);
-      disposeBadge(transfer.sprite);
-      this.activeTransfers.splice(this.activeTransfers.indexOf(transfer), 1);
-    }
-    this.loadSnapshot = current;
+    // Transfer ownership is authoritative in the rules. No visual sprite travels
+    // between station and roof; each surface displays only its owned passengers.
+    this.loadSnapshot = { tick: s.tick, seed: s.seed };
   }
   render(s: State, selectedLine = 0, events?: readonly ServiceEvent[],
     motion?: { previous: State | null; alpha: number }): void {
@@ -1028,7 +943,7 @@ export class MetroRenderer {
   }
   dispose(): void {
     this.observer.disconnect();
-    this.clearTransfers();
+    this.transfers.clear();
     for (const entry of this.cueEntries.values()) disposeCue(entry);
     this.cueEntries.clear();
     this.sceneCues.clear();

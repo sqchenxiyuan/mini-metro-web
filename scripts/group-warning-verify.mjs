@@ -10,6 +10,12 @@ try{
  assert.equal(result.badge,true,'group badge fixture missing');
  assert.ok(result.warningSource>0,'station warning fixture missing');
  assert.equal(result.ring,true,'the crowded station must have a WebGL warning ring');
- if(!result.warning)assert.match(result.alert,/站拥挤/,'omitted warning detail must have fallback');
+ if(!result.warning) {
+   // Mobile deliberately keeps only the owning warning ring; tapping the
+   // station supplies its crowd duration instead of a drifting map label.
+   await page.locator('[data-station="1"]').click();
+   assert.match(await page.locator('#station-peek').textContent(), /拥挤/,
+     'mobile warning ring must lead to readable station crowd detail');
+ }
  console.log(JSON.stringify({passed:true,...result}));
 }finally{await browser.close()}

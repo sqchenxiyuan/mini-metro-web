@@ -6,28 +6,30 @@ const overlaps = (a: { x: number; y: number; width: number; height: number },
   a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 
 describe('anchored WebGL cue placement', () => {
-  it('never routes a mobile queue connector through another station hit target', () => {
-    const stations = [{ id: 1, x: 170, y: 170, queue: 12, crowd: 0, selected: false },
-      { id: 2, x: 150, y: 150, queue: 8, crowd: 0, selected: false }];
-    const placed = layoutSceneCues(stations, { width: 390, height: 708 });
-    const cue = placed[0].queue;
-    expect(cue).not.toBeNull();
-    const center = { x: cue!.x + cue!.width / 2, y: cue!.y + cue!.height / 2 };
-    const delta = { x: center.x - 170, y: center.y - 170 };
-    const distance = Math.hypot(delta.x, delta.y);
-    const other = { x: 128, y: 145, width: 44, height: 44 };
-    // A near-station cue has no connector; otherwise sample the actual segment.
-    if (distance > 17) {
-      const start = { x: 170 + delta.x * 13 / distance, y: 170 + delta.y * 13 / distance };
-      for (let i = 0; i <= 20; i++) {
-        const x = start.x + (center.x - start.x) * i / 20;
-        const y = start.y + (center.y - start.y) * i / 20;
-        expect(x >= other.x && x <= other.x + other.width && y >= other.y && y <= other.y + other.height)
-          .toBe(false);
-      }
-    }
+  it('keeps every drawn passenger in a full fixed queue, with an accessible fallback for crowded stations', () => {
+    const points = [[1,125,380,30],[2,178,338,29],[3,257,391,29],[10,150,320,28],
+      [23,191,385,26],[36,287,344,24],[53,342,395,21],[77,244,316,15],
+      [102,86,394,13],[125,357,344,12],[147,326,302,10],[184,175,432,6],
+      [214,92,293,3],[255,226,291,0]];
+    const stations = points.map(([id,x,y,queue]) => ({ id,x,y,queue,crowd:0,selected:false }));
+    const placed = layoutSceneCues(stations,{width:390,height:708});
+    expect(placed.filter(p=>p.queue).length).toBeGreaterThan(0);
+    expect(placed.filter(p=>p.queueFallback).length).toBe(stations.filter(p=>p.queue).length-placed.filter(p=>p.queue).length);
   });
-  it('preserves destination shapes ahead of warning text on a populated phone map', () => {
+  it('puts a complete phone queue below its owner or omits it, irrespective of selection and crowd', () => {
+    const stations = [{ id: 1, x: 170, y: 170, queue: 12, crowd: 0, selected: false },
+      { id: 2, x: 250, y: 170, queue: 8, crowd: 0, selected: false }];
+    const initial = layoutSceneCues(stations, { width: 390, height: 708 });
+    expect(initial[0].queue).toMatchObject({ level: 'full', width: 66, height: 22 });
+    expect(initial[0].queue!.x + initial[0].queue!.width / 2).toBe(170);
+    expect(initial[0].queue!.y).toBeGreaterThan(209);
+    expect(initial[0].warning).toBeNull();
+    const changed = layoutSceneCues(stations.map((p) => ({ ...p, selected: !p.selected, crowd: 500 })),
+      { width: 390, height: 708 });
+    expect(changed.map((p) => p.queue)).toEqual(initial.map((p) => p.queue));
+    expect(changed.every((p) => p.warning === null && !p.warningFallback)).toBe(true);
+  });
+  it('shows only complete below-station piles on a populated phone map', () => {
     // Seed 420, week 4, 390px: most stations are crowded and have queues.
     const points = [[1,125,380,30],[2,178,338,29],[3,257,391,29],[10,150,320,28],
       [23,191,385,26],[36,287,344,24],[53,342,395,21],[77,244,316,15],
@@ -36,12 +38,13 @@ describe('anchored WebGL cue placement', () => {
     const stations = points.map(([id,x,y,queue]) => ({ id, x, y, queue,
       crowd: id === 184 || id === 214 || id === 255 ? 0 : 2250, selected: false }));
     const placed = layoutSceneCues(stations, { width: 390, height: 708 });
-    expect(placed.filter((p) => p.queue?.level === 'full' || p.queue?.level === 'compact').length)
-      .toBeGreaterThanOrEqual(6);
-    for (const item of placed) for (const cue of [item.queue, item.warning]) if (cue) {
+    expect(placed.some((p) => p.queue !== null)).toBe(true);
+    expect(placed.every((p) => !p.queue || p.queue.level === 'full')).toBe(true);
+    expect(placed.every((p) => p.warning === null && !p.warningFallback)).toBe(true);
+    for (const item of placed) if (item.queue) {
       const owner = stations.find((p) => p.id === item.id)!;
-      expect(Math.hypot(cue.x + cue.width / 2 - owner.x,
-        cue.y + cue.height / 2 - owner.y)).toBeLessThanOrEqual(36);
+      expect(item.queue.x + item.queue.width / 2).toBe(owner.x);
+      expect(item.queue.y).toBe(owner.y + 42);
     }
   });
   it('avoids all station touch rectangles and other actual cue bounds at phone density', () => {
@@ -61,40 +64,32 @@ describe('anchored WebGL cue placement', () => {
       expect(cue!.x).toBeGreaterThanOrEqual(0);
       expect(cue!.x + cue!.width).toBeLessThanOrEqual(390);
     }
-    for (const item of placed) for (const cue of [item.queue, item.warning]) if (cue) {
+    for (const item of placed) if (item.queue) {
       const station = stations.find((p) => p.id === item.id)!;
-      expect(Math.hypot(cue.x + cue.width / 2 - station.x,
-        cue.y + cue.height / 2 - station.y)).toBeLessThanOrEqual(36);
+      expect(item.queue.x + item.queue.width / 2).toBe(station.x);
+      expect(item.queue.y).toBe(station.y + 42);
     }
     for (let i = 0; i < visible.length; i++) for (let j = i + 1; j < visible.length; j++)
       expect(overlaps(visible[i]!, visible[j]!)).toBe(false);
     expect(placed.filter((p) => p.queueFallback).length).toBe(stations.filter((p) => p.queue).length -
       placed.filter((p) => p.queue).length);
-    expect(placed.filter((p) => p.warningFallback).length).toBe(stations.filter((p) => p.crowd).length -
-      placed.filter((p) => p.warning).length);
+    expect(placed.filter((p) => p.warningFallback).length).toBe(0);
   });
-  it('places warning detail first and keeps it at the owning anchor rather than a detached card', () => {
+  it('keeps warning rings at stations without a detached mobile warning detail', () => {
     const stations = [{ id: 1, x: 180, y: 170, queue: 4, crowd: 300, selected: true },
       { id: 2, x: 213, y: 151, queue: 8, crowd: 300, selected: false }];
     const placed = layoutSceneCues(stations, { width: 390, height: 708 });
-    expect(placed[0].warning).not.toBeNull();
-    expect(placed[0].warningFallback).toBe(false);
-    for (const item of placed) if (item.warning) {
-      expect(Math.hypot(item.warning.x + item.warning.width / 2 - stations[item.id - 1].x,
-        item.warning.y + item.warning.height / 2 - stations[item.id - 1].y)).toBeLessThanOrEqual(55);
-    }
-    expect(placed.flatMap((p) => [p.queue, p.warning].filter(Boolean)).every((box) =>
-      !overlaps(box!, { x: 191, y: 146, width: 44, height: 44 }) ||
-      placed[1].queue === box || placed[1].warning === box)).toBe(true);
+    expect(placed.every((item) => item.warning === null && !item.warningFallback)).toBe(true);
+    expect(placed.every((item) => item.queue || item.queueFallback)).toBe(true);
   });
   it('falls back instead of pushing a sparse warning or queue away from its station', () => {
     const placed = layoutSceneCues([{ id: 19, x: 180, y: 180, queue: 6, crowd: 100, selected: true }],
       { width: 390, height: 708 });
-    const shown = [placed[0].queue, placed[0].warning].filter((box) => box !== null);
-    expect(shown.length).toBeGreaterThan(0);
-    for (const cue of shown) expect(Math.hypot(cue!.x + cue!.width / 2 - 180,
-      cue!.y + cue!.height / 2 - 180)).toBeLessThanOrEqual(36);
-    expect(Number(placed[0].queueFallback) + Number(placed[0].warningFallback)).toBe(2 - shown.length);
+    expect(placed[0].warning).toBeNull();
+    expect(placed[0].warningFallback).toBe(false);
+    expect(placed[0].queue).not.toBeNull();
+    expect(placed[0].queue!.y).toBe(222);
+    expect(placed[0].queueFallback).toBe(false);
   });
 });
 

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+// SPDX-License-Identifier: GPL-3.0-or-later
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createState } from '../src/rules';
 import { MetroRenderer } from '../src/renderer';
@@ -20,180 +21,78 @@ vi.mock('three', async (original) => {
   }
   return { ...actual, WebGLRenderer: FakeWebGLRenderer };
 });
-const canvases: { calls: [string, ...unknown[]][] }[] = [];
 vi.stubGlobal('window', { devicePixelRatio: 1 });
 vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
 vi.stubGlobal('document', {
-  createElement: (tag: string) => {
-    if (tag !== 'canvas') throw Error(`unexpected element ${tag}`);
-    const canvas = { width: 0, height: 0, calls: [] as [string, ...unknown[]][] };
-    const context = new Proxy({}, {
-      get: (_target, key) => (...args: unknown[]) => canvas.calls.push([String(key), ...args]),
-      set: (_target, key, value) => { canvas.calls.push([String(key), value]); return true; },
-    });
-    canvases.push(canvas);
-    return { ...canvas, getContext: () => context };
-  },
+  createElement: () => ({ width: 0, height: 0,
+    getContext: () => ({ clearRect() {}, fillText() {}, strokeText() {},
+      set font(_value: string) {}, set textAlign(_value: string) {},
+      set textBaseline(_value: string) {}, set fillStyle(_value: string) {},
+      set strokeStyle(_value: string) {}, set lineWidth(_value: number) {} }),
+  }),
 });
-afterEach(() => { canvases.length = 0; });
-function scene() {
+function setup() {
   const container = { append: vi.fn(), getBoundingClientRect: () => ({ width: 1000, height: 700 }) };
   const renderer = new MetroRenderer(container as unknown as HTMLElement);
   const state = createState();
-  const at = state.stations[0].id;
-  const train: Train = {
-    id: 900, line: 0, from: at, to: null, progress: 0,
-    direction: 1 as const, dwell: 5, passengers: [], carriages: 0, retiring: false, moveTo: null,
-  };
-  state.lines[0].stops = [at, state.stations[1].id];
+  const train: Train = { id: 900, line: 0, from: state.stations[0].id, to: null, progress: 0,
+    direction: 1, dwell: 0, passengers: [], carriages: 0, retiring: false, moveTo: null };
+  state.lines[0].stops = [state.stations[0].id, state.stations[1].id];
   state.trains.push(train);
-  for (const station of state.stations) station.nextPassenger = Infinity;
   return { renderer, state, train };
 }
-function markers(renderer: MetroRenderer) {
-  return (renderer as unknown as { transfers: THREE.Group }).transfers.children;
-}
-function passenger(id: number, shape: 'circle' | 'triangle' | 'square') {
-  return { id, shape, born: 0, transfers: 0 };
-}
+const passenger = (id: number, shape: 'triangle' | 'square') => ({ id, shape, born: 0, transfers: 0 });
+const movingMarkers = (renderer: MetroRenderer) =>
+  (renderer as unknown as { transfers: THREE.Group }).transfers.children;
+const roofIcons = (renderer: MetroRenderer, id: number) =>
+  (renderer as unknown as { trains: Map<number, { group: THREE.Group }> }).trains.get(id)!.group
+    .children.filter((child) => child.name === 'onboard-shape').map((child) => child.userData.passengerId);
 
-describe('transfer visual feedback for dense stations', () => {
-  it('replaces a same-rider marker if the replay station changes at the same tick', () => {
-    const { renderer, state, train } = scene();
-    state.tick = 7;
+describe('discrete boarding and alighting feedback', () => {
+  it('never draws a moving transfer marker, even after a replay seek or skipped render frames', () => {
+    const { renderer, state, train } = setup();
     train.transfer = { passenger: passenger(777, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 1 };
+      stationId: state.stations[0].id, duration: 10, progress: 5 };
     renderer.render(state);
-    const before = markers(renderer)[0];
-    train.transfer = { ...train.transfer, stationId: state.stations[1].id };
+    expect(movingMarkers(renderer)).toHaveLength(0);
+    expect(roofIcons(renderer, train.id)).toEqual([]);
+    state.tick += 25;
+    train.transfer = { ...train.transfer, progress: 9, stationId: state.stations[1].id };
     renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(1);
-    expect(markers(renderer)[0]).not.toBe(before);
-    expect(markers(renderer)[0].userData.stationId).toBe(state.stations[1].id);
+    expect(movingMarkers(renderer)).toHaveLength(0);
+    expect(roofIcons(renderer, train.id)).toEqual([]);
     renderer.dispose();
   });
-  it('replaces a marker at the same tick when the same rider has a different transfer direction', () => {
-    const { renderer, state, train } = scene();
-    state.tick = 7;
-    train.transfer = { passenger: passenger(777, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 1 };
+  it('shows each completed boarding exactly once on the train and no ghost after reset', () => {
+    const { renderer, state, train } = setup();
+    train.transfer = { passenger: passenger(1001, 'triangle'), direction: 'board',
+      stationId: state.stations[0].id, duration: 10, progress: 10 };
     renderer.render(state);
-    const before = markers(renderer)[0];
-    train.transfer = { ...train.transfer, direction: 'alight' };
-    renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(1);
-    expect(markers(renderer)[0]).not.toBe(before);
-    expect(markers(renderer)[0].userData.direction).toBe('alight');
-    renderer.dispose();
-  });
-  it('clears a live marker when replay replaces the state at the same tick', () => {
-    const { renderer, state, train } = scene();
-    state.tick = 7;
-    train.transfer = { passenger: passenger(777, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 1 };
-    renderer.render(state);
-    expect(markers(renderer)).toHaveLength(1);
+    expect(roofIcons(renderer, train.id)).toEqual([]);
     train.transfer = null;
-    renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(0);
-    renderer.dispose();
-  });
-  it('shows a completed in-transit endpoint before the passenger enters the carriage', () => {
-    const { renderer, state, train } = scene();
-    const id = 902;
-    train.transfer = { passenger: passenger(id, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 1, progress: 0 };
-    renderer.render(state);
-    const start = markers(renderer)[0].position.clone();
+    train.passengers.push(passenger(1001, 'triangle'));
     state.tick++;
-    train.transfer.progress = 1;
     renderer.render(state);
-    const end = markers(renderer)[0].position.clone();
-    expect(end.distanceTo(start)).toBeGreaterThan(0.1);
-    expect(train.passengers).toHaveLength(0);
-    state.tick++;
-    train.transfer = null;
-    train.passengers.push(passenger(id, 'triangle'));
-    renderer.render(state);
-    expect(markers(renderer)).toHaveLength(0);
-    renderer.dispose();
-  });
-  it('draws a transfer directly from authoritative progress on the first frame or after seek', () => {
-    const { renderer, state, train } = scene();
-    train.transfer = { passenger: passenger(901, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 1 };
-    renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(1);
-    expect(markers(renderer)[0].userData).toMatchObject({ passengerId: 901, trainId: 900, direction: 'board' });
-    const pos = markers(renderer)[0].position.clone();
-    state.tick += 20;
-    renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(1);
-    expect(markers(renderer)[0].position.distanceTo(pos)).toBe(0);
-    renderer.dispose();
-  });
-  it('does not replay an old event with the same train ID after a restart at an equal tick', () => {
-    const { renderer, state, train } = scene();
-    renderer.render(state);
-    const oldEvent = { type: 'board' as const, tick: 1, sequence: 0,
-      stationId: state.stations[0].id, trainId: train.id, lineId: 0, passengerId: 77, shape: 'triangle' as const };
-    state.tick = 2;
-    train.transfer = { passenger: passenger(77, 'triangle'), direction: 'board',
-      stationId: state.stations[0].id, duration: 2, progress: 1 };
-    renderer.render(state, 0, [oldEvent]);
-    expect(markers(renderer)).toHaveLength(1);
+    expect(roofIcons(renderer, train.id)).toEqual([1001]);
+    expect(movingMarkers(renderer)).toHaveLength(0);
+    train.passengers = [];
     state.tick = 0;
-    train.transfer = null;
     renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(0);
+    expect(roofIcons(renderer, train.id)).toEqual([]);
+    expect(movingMarkers(renderer)).toHaveLength(0);
     renderer.dispose();
   });
-  it('does not fabricate snapshot-diff animation when an authoritative empty event batch is supplied', () => {
-    const { renderer, state, train } = scene();
-    state.stations[0].queue = [passenger(2111, 'triangle')];
+  it('removes a delivered passenger directly from the roof with no intermediate sprite', () => {
+    const { renderer, state, train } = setup();
+    train.passengers = [passenger(1001, 'square'), passenger(1002, 'triangle')];
     renderer.render(state);
-    state.tick++;
-    state.stations[0].queue = [];
-    train.passengers = [passenger(2111, 'triangle')];
-    renderer.render(state, 0, []);
-    expect(markers(renderer)).toHaveLength(0);
-    renderer.dispose();
-  });
-  it('keeps several real service events ordered across a tick gap even if renderer snapshots skip frames', () => {
-    const { renderer, state, train } = scene();
-    const station = state.stations[0];
-    train.passengers = [passenger(1001, station.shape as 'circle')];
-    renderer.render(state);
-    const events = [
-      { type: 'arrive' as const, tick: 9, sequence: 0, stationId: station.id, trainId: train.id, lineId: train.line, passengerId: null, shape: null },
-      { type: 'deliver' as const, tick: 9, sequence: 1, stationId: station.id, trainId: train.id, lineId: train.line, passengerId: 1001, shape: station.shape },
-      { type: 'board' as const, tick: 10, sequence: 0, stationId: station.id, trainId: train.id, lineId: train.line, passengerId: 1002, shape: 'triangle' as const },
-    ];
-    state.tick = 12;
-    state.score++;
+    expect(roofIcons(renderer, train.id)).toEqual([1001, 1002]);
     train.passengers = [passenger(1002, 'triangle')];
-    train.transfer = { passenger: passenger(1001, station.shape as 'circle'),
-      direction: 'alight', stationId: station.id, duration: 2, progress: 1 };
-    renderer.render(state, 0, events);
-    expect(markers(renderer).map((m) => [m.userData.passengerId, m.userData.direction])).toEqual([[1001, 'alight']]);
-    renderer.render(state, 0, events);
-    expect(markers(renderer)).toHaveLength(1);
-    renderer.dispose();
-  });
-  it('keeps multiple alighting passengers tied to their actual train and station without inventing an event on a pause', () => {
-    const { renderer, state, train } = scene();
-    const station = state.stations[0];
-    train.passengers.push(passenger(1001, station.shape as 'circle'), passenger(1002, station.shape as 'circle'));
+    train.transfer = { passenger: passenger(1001, 'square'), direction: 'alight',
+      stationId: state.stations[0].id, duration: 10, progress: 2 };
     renderer.render(state);
-    state.tick++;
-    state.score += 1;
-    train.passengers = [passenger(1002, station.shape as 'circle')];
-    train.transfer = { passenger: passenger(1001, station.shape as 'circle'),
-      direction: 'alight', stationId: station.id, duration: 2, progress: 0 };
-    renderer.render(state);
-    expect(markers(renderer).map((m) => m.userData.passengerId)).toEqual([1001]);
-    renderer.render(state);
-    expect(markers(renderer)).toHaveLength(1);
+    expect(roofIcons(renderer, train.id)).toEqual([1002]);
+    expect(movingMarkers(renderer)).toHaveLength(0);
     renderer.dispose();
   });
 });

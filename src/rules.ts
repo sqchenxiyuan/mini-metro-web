@@ -16,6 +16,8 @@ import type {
 
 export const RULES = Object.freeze({
   hz: 50,
+  serviceSeconds: { ordinary: 0.20, interchange: 0.15 },
+  tailPauseSeconds: 0.35,
   dayTicks: 600,
   weekTicks: 4200,
   capacity: 6,
@@ -205,7 +207,7 @@ export function createState(options: Options = {}): State {
   )
     throw new Error('非法开局参数');
   const s: State = {
-    version: 'orchard-metro.rules.5',
+    version: 'orchard-metro.rules.6',
     seed,
     rng: seed || 1,
     tick: 0,
@@ -539,6 +541,13 @@ export function findRoute(
 }
 function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): number {
   const p = station(s, t.from);
+  // Accumulate integer milliseconds before converting to ticks so a 0.15 s
+  // interchange service alternates 8/7 ticks without floating-point drift.
+  const served = t.serviceTicks ?? 0;
+  const seconds = p.interchange ? RULES.serviceSeconds.interchange : RULES.serviceSeconds.ordinary;
+  const tickMillis = Math.round(seconds * 1000) * RULES.hz;
+  const duration = Math.round((served + 1) * tickMillis / 1000) -
+    Math.round(served * tickMillis / 1000);
   // At a loop stop, boarding is evaluated for this train's direction, not
   // the shorter reverse trip offered by a different train on the same line.
   const localGraph = s.lines[t.line]?.loop ? graph(s, { line: t.line, direction: t.direction }) : g;
@@ -553,14 +562,16 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): numb
     if (passenger.shape === p.shape) {
       t.passengers.splice(i, 1);
       t.transfer = { passenger, direction: 'alight', stationId: p.id,
-        duration: p.interchange ? 4 : 6, progress: 0 };
+        duration, progress: 0 };
+      t.serviceTicks = served + 1;
       return 1;
     }
     const r = route(passenger.shape, t.line);
     if (r && r.line === t.line && r.next === next) continue;
     t.passengers.splice(i, 1);
     t.transfer = { passenger, direction: 'alight', stationId: p.id,
-      duration: p.interchange ? 4 : 6, progress: 0 };
+      duration, progress: 0 };
+    t.serviceTicks = served + 1;
     return 1;
   }
   if (t.passengers.length >= RULES.capacity * (1 + t.carriages)) return 0;
@@ -570,7 +581,8 @@ function service(s: State, t: Train, next: number, g: Map<number, Edge[]>): numb
     if (!r || r.line !== t.line || r.next !== next) continue;
     p.queue.splice(i, 1);
     t.transfer = { passenger, direction: 'board', stationId: p.id,
-      duration: p.interchange ? 4 : 6, progress: 0 };
+      duration, progress: 0 };
+    t.serviceTicks = served + 1;
     return 1;
   }
   return 0;
@@ -639,7 +651,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
     if (t.transfer) {
       const moving = t.transfer;
       moving.progress++;
-      if (moving.progress <= moving.duration) continue;
+      if (moving.progress < moving.duration) continue;
       const target = station(s, moving.stationId);
       if (moving.direction === 'board') {
         t.passengers.push(moving.passenger);
@@ -660,6 +672,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
         s.resources.locomotives++;
         s.resources.carriages += t.carriages;
         retired.push(t.id);
+        continue;
       } else if (t.moveTo) {
         unload(s, t, emit);
         const target = t.moveTo;
@@ -669,10 +682,11 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
           t.line = target.line;
           t.from = target.station;
           t.direction = 1;
+          t.serviceTicks = 0;
         } else t.retiring = true;
+        continue;
       }
-      // Keep the next rider's transfer on a later tick.
-      continue;
+      // Start the next rider (or tail) at this endpoint; no hidden dwell tick.
     }
     if (t.to !== null) {
       const d = Math.max(0.1, trackLength(station(s, t.from), station(s, t.to)));
@@ -701,6 +715,7 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
         t.line = target.line;
         t.from = target.station;
         t.direction = 1;
+        t.serviceTicks = 0;
       } else {
         t.retiring = true;
         continue;
@@ -732,11 +747,9 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
       continue;
     }
     g ??= graph(s);
-    if (service(s, t, next.id, g)) {
-      t.dwell = station(s, t.from).interchange ? 3 : 5;
-    } else {
+    if (!service(s, t, next.id, g)) {
       t.serviceTicks = -1;
-      t.dwell = 18;
+      t.dwell = Math.round(RULES.tailPauseSeconds * RULES.hz);
     }
   }
   if (retired.length) s.trains = s.trains.filter((t) => !retired.includes(t.id));

@@ -59,14 +59,14 @@ describe('transport rules', () => {
   });
   it('uses a new replay/rules version when tick cadence changes', () => {
     const s = new Session({ seed: 42 });
-    expect(s.getState().version).toBe('orchard-metro.rules.5');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v5');
+    expect(s.getState().version).toBe('orchard-metro.rules.6');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v6');
     expect(() => new ReplayPlayer({ ...s.exportReplay(), format: 'orchard-metro.replay.v3' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('versions the destination weighting change in rules and replays', () => {
     const session = new Session({ seed: 42 });
-    expect(session.getState().version).toBe('orchard-metro.rules.5');
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v5');
+    expect(session.getState().version).toBe('orchard-metro.rules.6');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v6');
     expect(() => new ReplayPlayer({ ...session.exportReplay(), format: 'orchard-metro.replay.v4' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('never chooses the origin shape when no matching destination exists', () => {
@@ -215,7 +215,7 @@ describe('transport rules', () => {
     a.queue.push(p);
     advance(s);
     expect(forward.transfer?.passenger.id).toBe(p.id);
-    ticks(s, 7);
+    ticks(s, 10);
     expect(forward.passengers.map((r) => r.id)).toContain(p.id);
   });
   it('boards a rider toward the next stop on a one-way loop even when reverse is geographically shorter', () => {
@@ -230,7 +230,7 @@ describe('transport rules', () => {
     a.queue.push(p);
     advance(s);
     expect(t.transfer?.passenger.id).toBe(p.id);
-    ticks(s, 7);
+    ticks(s, 10);
     expect(t.passengers.map((r) => r.id)).toContain(p.id);
   });
   it('does not board unreachable destinations or serve lines without locomotives', () => {
@@ -351,14 +351,14 @@ describe('transport rules', () => {
   });
   it('rejects old rules-2 replays instead of silently applying changed transfer timing', () => {
     const session = new Session({ seed: 13 });
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v5');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v6');
     const old = { ...session.exportReplay(), format: 'orchard-metro.replay.v2' };
     expect(() => new ReplayPlayer(old as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('rejects an old rules-1 replay after the boarding rules change', () => {
     const s = new Session({ seed: 13 });
-    expect(s.getState().version).toBe('orchard-metro.rules.5');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v5');
+    expect(s.getState().version).toBe('orchard-metro.rules.6');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v6');
     const legacy = { ...s.exportReplay(), format: 'orchard-metro.replay.v1' };
     expect(() => new ReplayPlayer(legacy as unknown as import('../src/types').Replay)).toThrow();
   });

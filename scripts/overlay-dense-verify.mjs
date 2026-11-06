@@ -21,12 +21,22 @@ try{
  assert.equal(metrics.sceneCues.ringCount,metrics.warned,'every crowded station keeps a scene warning ring');
  assert.equal(metrics.badgeStation.length,0,'train hit target must not cover station touch targets');
  assert.equal(metrics.queued,metrics.drawnQueues+Number(metrics.alerts.match(/(\d+) 站候车详情/)?.[1]??0));
- assert.equal(metrics.warned,metrics.drawnWarnings+Number(metrics.alerts.match(/(\d+) 站拥挤/)?.[1]??0));
+ assert.equal(metrics.drawnWarnings,0,'mobile warning countdown text must not drift around the map');
+ assert.equal(metrics.warned,metrics.sceneCues.ringCount,'crowded stations retain their warning rings');
+ for(const box of metrics.sceneCues.bounds.filter(b=>b.kind==='queue')){
+   const station=await page.locator(`[data-station="${box.id}"]`).first().evaluate(el=>({x:parseFloat(el.style.left),y:parseFloat(el.style.top)}));
+   assert.equal(box.level,'full','phone queues must not degrade into counts or compact summaries');
+   assert.ok(Math.abs(box.x+box.width/2-station.x)<0.01,'phone pile must remain horizontally centered on its station');
+   assert.ok(Math.abs(box.y-station.y-42)<0.01,'phone pile must sit at its fixed below-station offset');
+ }
+ const cueBoundsBeforeTap=metrics.sceneCues.bounds.filter(b=>b.kind==='queue');
  const tapStation=await page.evaluate(()=>window.metro.getState().stations.find(s=>s.queue.length)?.id);
  await page.locator(`[data-station="${tapStation}"]`).click();
  assert.equal(await page.locator('#station-peek').isVisible(),true,
    'tapping a station on mobile must show its actual waiting destinations in map context');
  assert.match(await page.locator('#station-peek').textContent(),new RegExp(`车站 ${tapStation}\\b.*候车`));
+ assert.deepEqual((await page.evaluate(()=>window.metro.sceneCues().bounds)).filter(b=>b.kind==='queue'),cueBoundsBeforeTap,
+   'selection must not relocate or hide any existing phone queue');
  const emptyStation=await page.evaluate(()=>window.metro.getState().stations.find(s=>!s.queue.length)?.id);
  if(emptyStation!==undefined){
    await page.locator(`[data-station="${emptyStation}"]`).click();
@@ -35,6 +45,17 @@ try{
  }
  assert.equal(await page.locator('#inspector').isVisible(),false,
    'mobile station tap must not cover the map with the inspector');
+ const sample=await page.evaluate(()=>{
+   const p=window.metro.getState().stations.find(s=>s.crowd>0);
+   if(!p)return null;
+   const remaining=Math.ceil((2250-p.crowd)/50);
+   return {id:p.id,remaining};
+ });
+ if(sample){
+   await page.locator(`[data-station="${sample.id}"]`).click();
+   assert.match(await page.locator('#station-peek').textContent(),new RegExp(`拥挤还剩 ${sample.remaining} 秒`),
+     'mobile crowd detail must show time remaining rather than elapsed time');
+ }
  const alert = page.locator('#map-alerts');
  if (await alert.isVisible()) {
    const controls=await page.locator('.left-panel').boundingBox(), a=await alert.boundingBox();

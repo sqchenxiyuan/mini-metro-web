@@ -93,7 +93,12 @@ export function layoutOverlays(stations: readonly OverlayStation[], viewport: { 
 
 /** Local CSS-pixel bounds of the actual WebGL geometries, including text planes. */
 export const warningCueBounds: OverlayBox = { x: 7, y: -40.5, width: 24, height: 28.5 };
-export function queueCueBounds(count: number, level: NonNullable<OverlayBox['level']>): OverlayBox {
+export function queueCueBounds(count: number, level: NonNullable<OverlayBox['level']>, mobile = false): OverlayBox {
+  if (mobile) {
+    const columns = Math.min(6, count);
+    const rows = Math.ceil(count / 6);
+    return { x: -columns * 11 / 2, y: -5, width: columns * 11, height: (rows - 1) * 12 + 10 };
+  }
   const icons = level === 'full' ? Math.min(count, 3) : level === 'compact' ? Math.min(count, 1) : 0;
   const text = level === 'count' ? String(count) : count > icons ? `+${count - icons}` : '';
   const textWidth = text ? Math.min(36, Math.max(16, text.length * 8)) : 0;
@@ -114,6 +119,33 @@ export function layoutSceneCues(stations: readonly OverlayStation[],
   viewport: { width: number; height: number }, reserved: readonly OverlayBox[] = []): OverlayPlacement[] {
   const mobile = viewport.width <= 650;
   const hitSize = mobile ? 44 : 36;
+  if (mobile) {
+    // A queue is a single indivisible pile directly below its own station.
+    // Neither selection nor crowd state may move another station's silhouettes.
+    const hits = stations.map((p) => ({ id: p.id, box: {
+      x: p.x - 22, y: p.y - 5, width: 44, height: 44,
+    } }));
+    const blocked = [...reserved];
+    const result = new Map<number, OverlayPlacement>();
+    for (const p of [...stations].sort((a, b) => a.id - b.id)) {
+      const placement: OverlayPlacement = { id: p.id, queue: null, warning: null,
+        warningFallback: false, queueFallback: false };
+      if (p.queue > 0) {
+        const shape = queueCueBounds(p.queue, 'full', true);
+        const box: OverlayBox = { x: p.x - shape.width / 2, y: p.y + 42,
+          width: shape.width, height: shape.height, level: 'full' };
+        if (box.x >= 4 && box.y >= 4 && box.x + box.width <= viewport.width - 4 &&
+          box.y + box.height <= viewport.height - 4 &&
+          !blocked.some((other) => intersects(box, other)) &&
+          !hits.some((hit) => hit.id !== p.id && intersects(box, hit.box))) {
+          placement.queue = box;
+          blocked.push(box);
+        } else placement.queueFallback = true;
+      }
+      result.set(p.id, placement);
+    }
+    return stations.map((p) => result.get(p.id)!);
+  }
   const hits = stations.map((p) => ({ id: p.id, box: {
     x: p.x - hitSize / 2, y: p.y - 5, width: hitSize, height: hitSize,
   } }));
