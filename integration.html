@@ -8,10 +8,24 @@
     <title>小小地铁 · AI 集成</title>
     <style>
       /* The integration shell is an entrypoint-only frame; shared game styles remain in main.ts. */
-      body { margin: 0; background: #e9ede4; color: #3c514a; }
+      body { margin: 0; background: #e9ede4; color: #3c514a; overflow-y: auto; }
+      html:has(#integration-runtime) { overflow-y: auto; }
+      body:has(#integration-runtime) { overflow: visible; }
+      #app { min-height: 0; }
       .integration-heading { max-width: 1420px; margin: 0 auto; padding: 14px 18px 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .integration-heading h1 { margin: 0; font-size: 16px; }
       .integration-heading a { color: #416456; }
+      /* Keep runtime controls visible in the first viewport; deeper AI tools scroll below. */
+      #integration-runtime { position: sticky; top: 0; z-index: 30; max-width: 1420px; margin: 0 auto 8px; padding: 10px 16px; background: #fbfaf4; border: 1px solid #dbe4d8; box-shadow: 0 2px 9px #40524720; }
+      #integration-runtime h2 { margin: 0 0 6px; font-size: 15px; }
+      .runtime-fields, .runtime-buttons { display: flex; flex-wrap: wrap; align-items: end; gap: 6px 12px; margin-top: 6px; }
+      #integration-runtime label { display: grid; gap: 3px; font-size: 13px; }
+      #integration-runtime input, #integration-runtime select { height: 34px; min-width: 80px; max-width: 150px; padding: 3px 6px; }
+      #integration-runtime button { min-height: 34px; padding: 5px 10px; }
+      #integration-runtime-state { margin: 6px 0 0; font-size: 13px; }
+      #integration-runtime-error { margin: 4px 0 0; color: #9b3347; font-size: 13px; }
+      #integration-runtime-error:empty { display: none; }
+      @media (max-width: 700px) { #integration-runtime { position: relative; padding: 9px; } #integration-runtime button { min-height: 44px; } }
       #game-shell { width: min(1420px, calc(100% - 32px)); margin: 0 auto; border: 1px solid #dbe4d8; border-radius: 12px; overflow: hidden; background: #f6f4eb; box-shadow: 0 8px 30px #4052471c; }
       #game-shell .workspace { height: max(560px, calc(100dvh - 245px)); }
       #integration-controls { max-width: 1100px; margin: 18px auto 32px; padding: 18px; background: #fbfaf4; border: 1px solid #dbe4d8; border-radius: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
@@ -28,6 +42,17 @@
   </head>
   <body>
     <header class="integration-heading"><h1>小小地铁 · AI 集成视图</h1><a href="./index.html">返回普通游戏</a></header>
+    <section id="integration-runtime" aria-label="游戏参数与运行控制">
+      <h2>游戏运行控制</h2>
+      <div class="runtime-fields"><label>地图<select id="integration-city"><option value="orchard">河湾新城</option><option value="harbor">东岸港湾</option><option value="islands">双子群岛</option></select></label>
+      <label>模式<select id="integration-mode"><option value="normal">经典</option><option value="endless">无尽</option><option value="extreme">极限</option><option value="creative">创意</option></select></label>
+      <label>种子<input id="integration-seed" type="number" min="0" max="4294967295" step="1" value="420" /></label>
+      <button id="integration-restart" type="button">按参数开新局</button></div>
+      <div class="runtime-buttons"><button id="integration-play" type="button">播放</button><button id="integration-pause" type="button">暂停</button>
+      <label>速度<select id="integration-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+      <label>推进 tick<input id="integration-ticks" type="number" min="1" max="5000" step="1" value="50" /></label><button id="integration-step" type="button">暂停并推进</button></div>
+      <p id="integration-runtime-state" role="status" aria-live="polite"></p><p id="integration-runtime-error" role="alert"></p>
+    </section>
     <section id="game-shell"><div id="app"></div></section>
     <aside id="integration-controls" aria-label="外部 AI 视觉与操作设置">
       <section><h2>视觉观察</h2><p>按需截取当前游戏画面；截图不会自动发送到外部服务。结构化观察包含完整内部状态。</p><button id="integration-capture" type="button">截取游戏画面</button><button id="integration-observe" type="button">查看结构化观察</button><img id="integration-image" alt="最近一次游戏画面截图" hidden /><pre id="integration-observation" aria-live="polite"></pre></section>

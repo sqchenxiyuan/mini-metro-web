@@ -1,6 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { validateDecision } from './session';
-import type { ActionResult, Decision, Observation } from './types';
+import type { ActionResult, Decision, Observation, Options, State } from './types';
+
+/** Public integration controls configure an existing game, not its rule constants. */
+export function parseIntegrationOptions(input: { seed: string; city: string; mode: string }): Options {
+  const seed = Number(input.seed);
+  if (!/^(0|[1-9]\d*)$/.test(input.seed) || !Number.isSafeInteger(seed) || seed > 0xffffffff)
+    throw new Error('种子必须是 0–4294967295 的整数');
+  if (!['orchard', 'harbor', 'islands'].includes(input.city)) throw new Error('未知地图');
+  if (!['normal', 'endless', 'extreme', 'creative'].includes(input.mode)) throw new Error('未知模式');
+  return { seed, city: input.city as Options['city'], mode: input.mode as Options['mode'] };
+}
+
+export function parseStepTicks(input: string): number {
+  const ticks = Number(input);
+  if (!/^[1-9]\d*$/.test(input) || !Number.isSafeInteger(ticks) || ticks > 5000)
+    throw new Error('每次只能推进 1–5000 个 tick');
+  return ticks;
+}
 
 /** External action textarea uses the same validated decision contract as SDK/HTTP. */
 export function parseIntegrationDecision(text: string): Decision {
@@ -8,6 +25,11 @@ export function parseIntegrationDecision(text: string): Decision {
 }
 
 type IntegrationGame = {
+  getState(): State;
+  restart(options: Options): void;
+  pause(value?: boolean): void;
+  step(ticks?: number): State;
+  controller: { paused: boolean; speed: number; setSpeed(value: number): void; mode: string };
   observe(): Observation;
   submit(decision: Decision, source?: string): ActionResult;
   capture(): string;
@@ -17,6 +39,52 @@ type IntegrationGame = {
 
 function attachIntegrationControls(game: IntegrationGame): void {
   const get = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+  const runtime = get<HTMLElement>('integration-runtime-state');
+  const runtimeError = get<HTMLElement>('integration-runtime-error');
+  const refresh = (): void => {
+    const s = game.getState();
+    runtime.textContent = `${s.city} · ${s.mode} · tick ${s.tick} · ${game.controller.paused ? '暂停' : '运行中'} · ${game.controller.speed}× · ${s.phase}`;
+    const speed = String(game.controller.speed);
+    get<HTMLSelectElement>('integration-speed').value = speed;
+    document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
+      const active = button.dataset.speed === speed;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  };
+  refresh();
+  // The game may run while the operator watches; keep status current without mutating state.
+  const timer = window.setInterval(refresh, 500);
+  window.addEventListener('pagehide', () => window.clearInterval(timer), { once: true });
+  get<HTMLButtonElement>('integration-restart').onclick = () => {
+    try {
+      const options = parseIntegrationOptions({
+        seed: get<HTMLInputElement>('integration-seed').value,
+        city: get<HTMLSelectElement>('integration-city').value,
+        mode: get<HTMLSelectElement>('integration-mode').value,
+      });
+      game.restart(options);
+      runtimeError.textContent = '';
+      refresh();
+      runtime.textContent += ' · 新局已创建';
+    } catch (error) { runtimeError.textContent = String(error); }
+  };
+  get<HTMLButtonElement>('integration-play').onclick = () => { game.pause(false); refresh(); };
+  get<HTMLButtonElement>('integration-pause').onclick = () => { game.pause(true); refresh(); };
+  get<HTMLSelectElement>('integration-speed').onchange = (event) => {
+    try { game.controller.setSpeed(Number((event.target as HTMLSelectElement).value)); refresh(); }
+    catch (error) { runtimeError.textContent = String(error); }
+  };
+  get<HTMLButtonElement>('integration-step').onclick = () => {
+    try {
+      const ticks = parseStepTicks(get<HTMLInputElement>('integration-ticks').value);
+      game.pause(true);
+      const state = game.step(ticks);
+      refresh();
+      runtime.textContent += ` · 已推进 ${ticks} tick 至 ${state.tick}`;
+      runtimeError.textContent = '';
+    } catch (error) { runtimeError.textContent = String(error); }
+  };
   const status = get<HTMLElement>('integration-status');
   get<HTMLButtonElement>('integration-observe').onclick = () => {
     try {

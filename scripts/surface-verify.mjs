@@ -34,9 +34,49 @@ try {
   assert.equal(await page.locator('#agent-toggle').count(), 0, 'human bundle must not expose agent UI');
   await page.goto(new URL('integration.html', host).href, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.metro);
+  const runtime = page.locator('#integration-runtime');
+  assert.equal(await runtime.isVisible(), true);
+  const visibility = await runtime.boundingBox();
+  assert.ok(visibility.y < 500, 'runtime controls must be discoverable near the first viewport');
+  await page.locator('#integration-city').selectOption('harbor');
+  await page.locator('#integration-mode').selectOption('endless');
+  await page.locator('#integration-seed').fill('421');
+  await page.locator('#integration-restart').click();
+  assert.deepEqual(await page.evaluate(() => { const s = window.metro.getState(); return [s.city, s.mode, s.seed, s.tick]; }), ['harbor','endless',421,0]);
+  await page.locator('#integration-ticks').fill('50');
+  await page.locator('#integration-step').click();
+  assert.equal(await page.evaluate(() => window.metro.getState().tick), 50);
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
+  await page.locator('#integration-speed').selectOption('2');
+  assert.equal(await page.evaluate(() => window.metro.controller.speed), 2);
+  assert.equal(await page.locator('[data-speed="2"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('[data-speed="1"]').getAttribute('aria-pressed'), 'false');
+  await page.locator('#integration-play').click();
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), false);
+  await page.locator('#integration-pause').click();
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
+  await page.locator('#integration-seed').fill('-1');
+  await page.locator('#integration-restart').click();
+  assert.match(await page.locator('#integration-runtime-error').textContent(), /种子必须/);
+  await page.waitForTimeout(650);
+  assert.match(await page.locator('#integration-runtime-error').textContent(), /种子必须/,
+    'invalid settings must remain visible after periodic refresh');
+  assert.equal(await page.evaluate(() => window.metro.getState().seed), 421);
   assert.equal(await page.locator('#game-shell #app').count(), 1);
   assert.equal(await page.locator('#agent-toggle').count(), 1);
   assert.equal(await page.locator('#integration-controls').isVisible(), true);
+  const scrollability = await page.evaluate(() => ({
+    overflow: getComputedStyle(document.body).overflowY,
+    controlsTop: document.querySelector('#integration-controls').getBoundingClientRect().top,
+    viewport: innerHeight,
+  }));
+  assert.notEqual(scrollability.overflow, 'hidden', 'operator panel must be scrollable');
+  await page.mouse.move(1100, 20);
+  await page.mouse.wheel(0, 1200);
+  await page.waitForFunction(() => scrollY > 50, null, { timeout: 3000 });
+  assert.ok(await page.evaluate(() => document.querySelector('#integration-controls').getBoundingClientRect().top < innerHeight),
+    'wheel must reach the lower AI controls');
+  await page.locator('#integration-controls').scrollIntoViewIfNeeded();
   const family = await page.locator('#app').evaluate((node) => getComputedStyle(node).fontFamily);
   assert.match(family, /Noto Sans SC Metro/, 'integration game must use the same bundled Chinese font');
   assert.equal(await page.evaluate(() => document.fonts.check('14px "Noto Sans SC Metro"', '地铁乘客')), true);
