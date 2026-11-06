@@ -73,6 +73,9 @@ export class MetroController {
   get mode(): 'human' | 'agent' | 'replay' {
     return this.player ? 'replay' : this.policy ? 'agent' : 'human';
   }
+  get activeAgentSource(): string | null {
+    return this.policy ? this.source : null;
+  }
   get waiting(): boolean {
     return !!this.pending;
   }

@@ -50,7 +50,9 @@
       <button id="integration-restart" type="button">按参数开新局</button></div>
       <div class="runtime-buttons"><button id="integration-play" type="button">播放</button><button id="integration-pause" type="button">暂停</button>
       <label>速度<select id="integration-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-      <label>推进 tick<input id="integration-ticks" type="number" min="1" max="5000" step="1" value="50" /></label><button id="integration-step" type="button">暂停并推进</button></div>
+      <label>推进 tick<input id="integration-ticks" type="number" min="1" max="5000" step="1" value="50" /></label><button id="integration-step" type="button">暂停并推进</button>
+      <button id="integration-preset-start" type="button">运行预制策略</button><button id="integration-preset-stop" type="button" disabled>停止预制策略</button></div>
+      <small>预制策略使用完整结构化状态，不是视觉 AI；仅在此集成版运行，不连接外部服务。开始后自动规划线路、派车、选每周补给；暂停可观察，停止则切回手动并暂停。</small>
       <p id="integration-runtime-state" role="status" aria-live="polite"></p><p id="integration-runtime-error" role="alert"></p>
     </section>
     <section id="game-shell"><div id="app"></div></section>

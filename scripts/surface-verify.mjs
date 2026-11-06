@@ -84,5 +84,56 @@ try {
   assert.equal(await page.locator('#integration-image').isVisible(), true);
   await page.locator('#integration-observe').click();
   assert.match(await page.locator('#integration-observation').textContent(), /orchard-metro\.agent\.v1/);
-  console.log(JSON.stringify({ passed: true, variants: ['human', 'integration'] }));
+  await page.locator('#integration-seed').fill('421');
+  await page.locator('#integration-restart').click();
+  await page.locator('#integration-preset-start').click();
+  await page.waitForFunction(() => window.metro.controller.mode === 'agent' &&
+    window.metro.controller.decisions.some((d) => d.source === 'preset-dispatcher'), null, { timeout: 5000 });
+  const preset = await page.evaluate(() => ({ mode: window.metro.controller.mode,
+    decisions: window.metro.controller.decisions.filter((d) => d.source === 'preset-dispatcher').length,
+    lines: window.metro.getState().lines.filter((l) => l.stops.length).length }));
+  assert.ok(preset.decisions > 0 && preset.lines > 0, 'preset must plan a route, not only change a status label');
+  assert.equal(await page.locator('#integration-preset-stop').isEnabled(), true);
+  await page.locator('#integration-preset-stop').click();
+  assert.equal(await page.evaluate(() => window.metro.controller.mode), 'human');
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
+  const stopped = await page.evaluate(() => window.metro.getState().tick);
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.metro.getState().tick), stopped, 'stopped preset must not advance the game');
+  await page.locator('#integration-restart').click();
+  assert.equal(await page.locator('#integration-preset-stop').isDisabled(), true);
+  await page.locator('#integration-preset-start').click();
+  await page.waitForFunction(() => window.metro.controller.mode === 'agent');
+  await page.locator('#integration-pause').click();
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
+  assert.equal(await page.evaluate(() => window.metro.controller.mode), 'agent', 'pause should retain preset control');
+  await page.locator('#integration-play').click();
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), false);
+  await page.locator('#integration-preset-stop').click();
+  await page.locator('#integration-preset-start').click();
+  await page.waitForFunction(() => window.metro.controller.mode === 'agent');
+  await page.locator('#integration-agent-url').fill('http://127.0.0.1:1/decide');
+  await page.locator('#integration-connect').click();
+  assert.equal(await page.locator('#integration-preset-stop').isDisabled(), true,
+    'switching to HTTP Agent must release preset stop control');
+  assert.equal(await page.locator('#integration-preset-start').isEnabled(), true);
+  assert.match(await page.locator('#integration-runtime-state').textContent(), /http-agent/);
+  await page.locator('#integration-stop').click();
+  await page.locator('#integration-restart').click();
+  await page.locator('#integration-preset-start').click();
+  await page.waitForFunction(() => window.metro.controller.mode === 'agent');
+  await page.locator('#tools-toggle').click();
+  await page.locator('#agent-toggle').click();
+  await page.waitForFunction(() => document.querySelector('#integration-preset-stop').disabled);
+  assert.equal(await page.evaluate(() => window.metro.controller.mode), 'human');
+  assert.equal(await page.locator('#integration-preset-start').isEnabled(), true);
+  await page.locator('#integration-preset-start').click();
+  await page.waitForFunction(() => window.metro.controller.mode === 'agent');
+  await page.locator('#replay-toggle').click();
+  await page.locator('#replay-current').click();
+  await page.waitForFunction(() => document.querySelector('#integration-preset-stop').disabled &&
+    document.querySelector('#integration-preset-start').disabled, null, { timeout: 2000 });
+  assert.equal(await page.locator('#integration-preset-stop').isDisabled(), true);
+  assert.equal(await page.locator('#integration-preset-start').isDisabled(), true);
+  console.log(JSON.stringify({ passed: true, variants: ['human', 'integration'], preset }));
 } finally { await browser.close(); if (server) await new Promise((resolve) => server.close(resolve)); }

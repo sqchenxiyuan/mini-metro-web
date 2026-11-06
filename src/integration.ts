@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { validateDecision } from './session';
+import { dispatcherPolicy } from './agent';
 import type { ActionResult, Decision, Observation, Options, State } from './types';
 
 /** Public integration controls configure an existing game, not its rule constants. */
@@ -29,7 +30,8 @@ type IntegrationGame = {
   restart(options: Options): void;
   pause(value?: boolean): void;
   step(ticks?: number): State;
-  controller: { paused: boolean; speed: number; setSpeed(value: number): void; mode: string };
+  controller: { paused: boolean; speed: number; setSpeed(value: number): void; mode: string; activeAgentSource: string | null };
+  startAgent(policy?: typeof dispatcherPolicy, source?: string): void;
   observe(): Observation;
   submit(decision: Decision, source?: string): ActionResult;
   capture(): string;
@@ -41,9 +43,16 @@ function attachIntegrationControls(game: IntegrationGame): void {
   const get = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
   const runtime = get<HTMLElement>('integration-runtime-state');
   const runtimeError = get<HTMLElement>('integration-runtime-error');
+  const presetStart = get<HTMLButtonElement>('integration-preset-start');
+  const presetStop = get<HTMLButtonElement>('integration-preset-stop');
+  const isPreset = (): boolean => game.controller.activeAgentSource === 'preset-dispatcher';
+  const syncPreset = (): void => {
+    presetStart.disabled = isPreset() || game.controller.mode === 'replay';
+    presetStop.disabled = !isPreset();
+  };
   const refresh = (): void => {
     const s = game.getState();
-    runtime.textContent = `${s.city} · ${s.mode} · tick ${s.tick} · ${game.controller.paused ? '暂停' : '运行中'} · ${game.controller.speed}× · ${s.phase}`;
+    runtime.textContent = `${s.city} · ${s.mode} · tick ${s.tick} · ${game.controller.paused ? '暂停' : '运行中'} · ${game.controller.speed}× · ${s.phase}${game.controller.activeAgentSource ? ` · 控制：${game.controller.activeAgentSource}` : ''}`;
     const speed = String(game.controller.speed);
     get<HTMLSelectElement>('integration-speed').value = speed;
     document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button) => {
@@ -51,11 +60,27 @@ function attachIntegrationControls(game: IntegrationGame): void {
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
     });
+    syncPreset();
   };
   refresh();
   // The game may run while the operator watches; keep status current without mutating state.
   const timer = window.setInterval(refresh, 500);
   window.addEventListener('pagehide', () => window.clearInterval(timer), { once: true });
+  presetStart.onclick = () => {
+    try {
+      game.startAgent(dispatcherPolicy, 'preset-dispatcher');
+      runtimeError.textContent = '';
+      refresh();
+      runtime.textContent += ' · 预制策略已运行';
+    } catch (error) { runtimeError.textContent = String(error); syncPreset(); }
+  };
+  presetStop.onclick = () => {
+    if (!isPreset()) return;
+    game.stopAgent();
+    game.pause(true);
+    refresh();
+    runtime.textContent += ' · 预制策略已停止';
+  };
   get<HTMLButtonElement>('integration-restart').onclick = () => {
     try {
       const options = parseIntegrationOptions({
@@ -110,6 +135,7 @@ function attachIntegrationControls(game: IntegrationGame): void {
   get<HTMLButtonElement>('integration-connect').onclick = () => {
     try {
       game.connectHttp(get<HTMLInputElement>('integration-agent-url').value.trim());
+      refresh();
       status.textContent = 'HTTP Agent 已接入；外部服务将收到完整结构化状态。';
     } catch (error) { status.textContent = String(error); }
   };
