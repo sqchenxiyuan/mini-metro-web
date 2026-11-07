@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 const browser=await chromium.launch({headless:true,...(process.env.METRO_BROWSER_EXECUTABLE_PATH?{executablePath:process.env.METRO_BROWSER_EXECUTABLE_PATH}:{}),args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader']});
 try{
  const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1});
- await page.goto(process.env.METRO_TEST_URL??'http://127.0.0.1:4175/',{waitUntil:'networkidle'});await page.waitForFunction(()=>window.metro);
+ await page.goto(process.env.METRO_TEST_URL??'http://127.0.0.1:5175/integration.html',{waitUntil:'networkidle'});await page.waitForFunction(()=>window.metro);
  await page.evaluate(()=>{window.metro.restart({seed:420,mode:'endless'});window.metro.pause();for(let i=0;i<9;i++){const s=window.metro.getState();if(s.phase==='upgrade')window.metro.submit({action:{type:'upgrade',choice:s.upgrades[0]},reason:'overlay test'});window.metro.step(4200)}const s=window.metro.getState();if(s.phase==='upgrade')window.metro.submit({action:{type:'upgrade',choice:s.upgrades[0]},reason:'overlay test'})});
  await page.waitForTimeout(220);
  const metrics=await page.evaluate(()=>{
@@ -17,6 +17,18 @@ try{
   const badgeStation=badgeRect?stations.filter(s=>hit(badgeRect,r(s))).map(s=>s.dataset.station):[];
   return {queued,warned,drawnQueues,drawnWarnings,alerts,badgeStation,sceneCues,domOverlays:document.querySelectorAll('#overlay-layer [data-overlay]').length};
  });
+ if (await page.evaluate(() => window.metro.mobileMapStats() !== null)) {
+   const mobile = await page.evaluate(() => {
+     const state = window.metro.getState(), map = window.metro.mobileMapStats();
+     return { expected: state.stations.flatMap(p => p.queue.map(q => q.id)).sort((a,b)=>a-b),
+       actual: map.laidOutPassengerIds.sort((a,b)=>a-b),
+       queues: map.stationCount, rings: window.metro.sceneCues().ringCount };
+   });
+   assert.deepEqual(mobile.actual, mobile.expected, 'mobile map must account for each real passenger ID once');
+   assert.equal(mobile.queues, await page.evaluate(() => window.metro.getState().stations.length));
+   assert.equal(mobile.rings, metrics.warned);
+   console.log(JSON.stringify({ passed:true, mobile:true, passengers:mobile.actual.length, stations:mobile.queues }));
+ } else {
  assert.equal(metrics.domOverlays,0,'passenger and warning cues must render inside the game canvas');
  assert.equal(metrics.sceneCues.ringCount,metrics.warned,'every crowded station keeps a scene warning ring');
  assert.equal(metrics.badgeStation.length,0,'train hit target must not cover station touch targets');
@@ -108,4 +120,5 @@ try{
    assert.equal(await alert.getAttribute('data-omitted'),'', 'early snapshot must not inherit late station IDs');
  }
  console.log(JSON.stringify({passed:true,...metrics}));
+ }
 }finally{await browser.close()}

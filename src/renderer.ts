@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import {
   LINE_COLORS,
   RULES,
+  SHAPES,
   riverCount,
   riverX,
   segments,
@@ -478,16 +479,18 @@ export class MetroRenderer {
       if (layout?.queue && p.queue.length) {
         const level = layout.queue.level ?? 'full';
         const mobile = this.bounds.width <= 650;
-        const local = queueCueBounds(p.queue.length, level, mobile);
-        const passengers = mobile ? p.queue : level === 'full' ? p.queue.slice(0, 3) :
-          level === 'compact' ? p.queue.slice(0, 1) : [];
-        const shapes = passengers.map((passenger) => passenger.shape);
-        const extra = mobile ? '' : level === 'count' ? String(p.queue.length) :
-          p.queue.length > shapes.length ? `+${p.queue.length - shapes.length}` : '';
-        const cueX = layout.queue.x - local.x, cueY = layout.queue.y - local.y;
+        const local = queueCueBounds(p.queue.length, level, mobile,
+          mobile ? undefined : new Set(p.queue.map((passenger) => passenger.shape)).size);
+        const individual = mobile || p.queue.length <= 10;
+        const passengers = individual ? p.queue : [];
+        const groups = individual ? [] : SHAPES.map((shape) => ({
+          shape, count: p.queue.filter((passenger) => passenger.shape === shape).length,
+        })).filter(({ count }) => count > 0);
+        const cueX = layout.queue.x + layout.queue.width / 2;
+        const cueY = layout.queue.y - local.y;
         place(`queue-${p.id}`, cueX, cueY,
-          JSON.stringify([mobile, level, mobile ? passengers.map((v) => [v.id, v.shape]) : shapes, extra]), (entry) => {
-            if (mobile) {
+          JSON.stringify(individual ? passengers.map(({ id, shape }) => [id, shape]) : groups), (entry) => {
+            if (individual) {
               passengers.forEach((passenger, index) => {
                 const icon = this.cueShape(passenger.shape,
                   -Math.min(6, passengers.length - Math.floor(index / 6) * 6) * 11 / 2 +
@@ -498,16 +501,18 @@ export class MetroRenderer {
               });
               return;
             }
-            const occupied = shapes.length * 11 + (extra ? Math.min(27, extra.length * 8) : 0);
-            shapes.forEach((shape, index) => entry.group.add(this.cueShape(shape,
-              -occupied / 2 + index * 11 + 5.5)));
-            if (extra) {
-              const label = cueText(extra, '#283248', this.cueLabelGeometry);
-              label.position.set(occupied / 2 - label.scale.x / 2, 0, 1);
+            groups.forEach(({ shape, count }, index) => {
+              const columns = Math.min(groups.length, 4);
+              const row = Math.floor(index / 4);
+              const icon = this.cueShape(shape, -columns * 50 / 2 + (index % 4) * 50 + 6);
+              icon.position.y = row * 20;
+              entry.group.add(icon);
+              const label = cueText(`×${count}`, '#283248', this.cueLabelGeometry);
+              label.position.set(icon.position.x + 5 + label.scale.x / 2, row * 20, 1);
               label.renderOrder = 3;
               entry.group.add(label);
               entry.labels.push(label);
-            }
+            });
           });
       }
       if (p.crowd > 0) {

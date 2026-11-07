@@ -7,7 +7,8 @@ import { runAgent, ReplayPlayer, dispatcherPolicy, createHttpAgent, decide, crea
 
 const output = 'test-results/production';
 await mkdir(output, { recursive: true });
-const host = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:4175';
+const host = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:4175/integration.html';
+const origin = new URL(host).origin;
 const complete = await runAgent({ seed: 420, maxTicks: RULES.hz * 1200 });
 assert.equal(complete.reason, 'over');
 assert.equal(complete.errors, 0);
@@ -56,7 +57,7 @@ const page = await browser.newPage({
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('request', (req) => {
   if (
-    !req.url().startsWith(host) &&
+    !req.url().startsWith(`${origin}/`) &&
     !req.url().startsWith(agentUrl) &&
     !req.url().startsWith('data:')
   )
@@ -65,9 +66,10 @@ page.on('request', (req) => {
 try {
   await page.goto(host, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.metro);
+  assert.equal(await page.locator('meta[name="metro-surface"]').getAttribute('content'), 'integration');
   assert.equal(await page.locator('#inspector').isVisible(), false);
   assert.equal(await page.locator('#line-tools').isVisible(), false);
-  assert.ok((await page.locator('#stage').boundingBox()).width >= 1580);
+  assert.ok((await page.locator('#stage').boundingBox()).width >= 1400);
   const brand = await page.locator('.brand').boundingBox(),
     city = await page.locator('.city-heading').boundingBox();
   assert.ok(brand.x + brand.width < city.x, 'header labels must not overlap');
@@ -93,7 +95,9 @@ try {
   await page.click('#line-tools-close');
   await page.evaluate((ticks) => window.metro.step(ticks), RULES.weekTicks);
   assert.equal(await page.evaluate(() => window.metro.getState().phase), 'upgrade');
-  await page.locator('[data-upgrade]').first().click();
+  const upgradeButton = await page.locator('[data-upgrade]').first().boundingBox();
+  await page.mouse.click(upgradeButton.x + upgradeButton.width / 2,
+    upgradeButton.y + upgradeButton.height / 2);
   assert.equal(await page.evaluate(() => window.metro.getState().phase), 'playing');
   await page.evaluate((ticks) => window.metro.step(ticks), 3 * RULES.hz);
   const browserReplay = await page.evaluate(() => window.metro.exportReplay());
@@ -151,17 +155,13 @@ try {
   assert.equal(snapshots[0], snapshots[1]);
   await page.evaluate((tick) => window.metro.seek(tick), 245 * RULES.hz);
   await page.click('#tab-dispatch');
-  if (await page.locator('#agent-observation').count()) {
-    await page.click('#agent-observation');
-    const wire = JSON.parse(await page.locator('#observation-json').textContent());
-    assert.equal(wire.protocol, 'orchard-metro.agent.v1');
-    assert.equal(hash(wire.state), await page.evaluate(() => window.metro.hash()));
-    assert.equal(typeof wire.state.rng, 'number');
-    assert.equal(typeof wire.state.stations[0].nextPassenger, 'number');
-    await page.click('#observation-close');
-  } else {
-    assert.equal(await page.locator('.agent-controls').count(), 0, 'normal game is human-only');
-  }
+  await page.click('#agent-observation');
+  const wire = JSON.parse(await page.locator('#observation-json').textContent());
+  assert.equal(wire.protocol, 'orchard-metro.agent.v1');
+  assert.equal(hash(wire.state), await page.evaluate(() => window.metro.hash()));
+  assert.equal(typeof wire.state.rng, 'number');
+  assert.equal(typeof wire.state.stations[0].nextPassenger, 'number');
+  await page.click('#observation-close');
   await page.screenshot({ path: `${output}/inspector.png`, fullPage: true });
   await page.click('#inspector-close');
   await page.waitForTimeout(200);
@@ -206,19 +206,28 @@ try {
     /64 KiB/,
   );
   await assert.rejects(() => decide(createHttpAgent(`${agentUrl}/stall`), observation, 30), /超时/);
-  await page.evaluate((url) => {
-    window.metro.restart();
-    window.metro.connectHttp(url);
-  }, `${agentUrl}/ok`);
+  await page.selectOption('#integration-city', 'orchard');
+  await page.selectOption('#integration-mode', 'normal');
+  await page.fill('#integration-seed', '420');
+  await page.click('#integration-restart');
+  await page.fill('#integration-agent-url', `${agentUrl}/ok`);
+  await page.click('#integration-connect');
+  assert.match(await page.locator('#integration-status').textContent(), /HTTP Agent/);
   await page.waitForFunction(() => window.metro.getState().lines[0].stops.length === 3);
-  await page.evaluate(() => {
-    window.metro.stopAgent();
-    window.metro.pause();
-  });
+  await page.click('#integration-stop');
+  await page.click('#integration-pause');
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
   assert.equal(
     await page.evaluate(() => window.metro.exportReplay().decisions[0].source),
     'http-agent',
   );
+  await page.click('#integration-restart');
+  await page.click('#integration-preset-start');
+  await page.waitForFunction(() => window.metro.exportReplay().decisions.some(
+    (decision) => decision.source === 'preset-dispatcher'));
+  assert.equal(await page.locator('#integration-preset-stop').isEnabled(), true);
+  await page.click('#integration-preset-stop');
+  assert.equal(await page.evaluate(() => window.metro.controller.paused), true);
   // A bad JSON file is rejected while preserving the current game.
   const preserved = await page.evaluate(() => window.metro.hash());
   await page.locator('#import-file').setInputFiles({
@@ -261,29 +270,56 @@ try {
   mobile.on('pageerror', (e) => errors.push(String(e)));
   await mobile.goto(host, { waitUntil: 'networkidle' });
   await mobile.waitForFunction(() => window.metro);
+  assert.equal(await mobile.locator('meta[name="metro-surface"]').getAttribute('content'), 'integration');
   assert.equal(await mobile.locator('#inspector').isVisible(), false);
   assert.equal(await mobile.locator('#line-tools').isVisible(), false);
+  // The integration controls precede the map: scroll the actual game into view.
+  await mobile.evaluate(() => window.scrollTo(0, window.scrollY +
+    document.querySelector('#stage').getBoundingClientRect().top - 140));
   const touchPoints = await mobile.evaluate(() =>
     [1, 2, 3].map((id) => window.metro.projectStation(id)),
   );
   const cdp = await mobile.context().newCDPSession(mobile);
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ ...touchPoints[0], id: 0 }],
-  });
-  for (const p of touchPoints.slice(1))
+  const touchDrag = async (from, to) => {
     await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [{ ...p, id: 0 }],
+      type: 'touchStart', touchPoints: [{ ...from, id: 0 }],
     });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    for (let i = 1; i <= 12; i++)
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove',
+        touchPoints: [{ x: from.x + (to.x - from.x) * i / 12,
+          y: from.y + (to.y - from.y) * i / 12, id: 0 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  await touchDrag(touchPoints[0], touchPoints[1]);
+  assert.deepEqual(await mobile.evaluate(() => window.metro.getState().lines[0].stops), [1, 2]);
+  // Station 3 is off the geographic map; use visible zoom and pan controls.
+  await mobile.click('#zoom-out');
+  await mobile.click('#zoom-out');
+  const stageBox = await mobile.locator('#stage').boundingBox();
+  await touchDrag({ x: stageBox.x + stageBox.width - 18, y: stageBox.y + stageBox.height * .85 },
+    { x: stageBox.x + stageBox.width - 208, y: stageBox.y + stageBox.height * .85 });
+  const extension = await mobile.evaluate(() => window.metro.projectStation(3));
+  assert.ok(extension.x > stageBox.x + 20 && extension.x < stageBox.x + stageBox.width - 20 &&
+    extension.y > stageBox.y + 20 && extension.y < stageBox.y + stageBox.height - 20,
+  'third station must be visible after zoom and pan');
+  await mobile.waitForTimeout(120);
+  const handle = await mobile.locator('[data-route-handle="0-end"]').evaluate((node) => {
+    const rect = document.querySelector('#stage').getBoundingClientRect();
+    return { x: rect.left + Number(node.getAttribute('cx')),
+      y: rect.top + Number(node.getAttribute('cy')) };
+  });
+  assert.ok(handle.x > stageBox.x + 20 && handle.x < stageBox.x + stageBox.width - 20 &&
+    handle.y > stageBox.y + 20 && handle.y < stageBox.y + stageBox.height - 20,
+  'route endpoint handle must remain touchable');
+  await touchDrag(handle, extension);
+  await mobile.waitForTimeout(120);
   assert.deepEqual(await mobile.evaluate(() => window.metro.getState().lines[0].stops), [1, 2, 3]);
   await mobile.evaluate(() => window.metro.pause());
   await mobile.waitForTimeout(180);
   await mobile.screenshot({ path: `${output}/mobile.png`, fullPage: true });
   await mobile.click('#tools-toggle');
   assert.equal(await mobile.locator('#station-detail').count(), 1);
-  assert.equal(await mobile.locator('#agent-toggle').count(), 0);
+  assert.equal(await mobile.locator('#agent-toggle').count(), 1);
   await mobile.click('#inspector-close');
   assert.equal(await mobile.locator('#inspector').isVisible(), false);
   await mobile.click('#line-tools-toggle');
@@ -311,7 +347,7 @@ try {
       'touch drawing',
       'mobile layout',
       'collapsed tools and full-width map',
-      'human-only normal game',
+      'integration agent observation, HTTP and preset controls',
       'mobile panel controls',
     ],
     nodeToBrowser: {

@@ -29,7 +29,7 @@ try {
   assert.equal(await page.locator('.agent-controls').isVisible(), false, 'normal game must not display automatic agents');
   assert.equal(await page.locator('#sample-route').isVisible(), false, 'normal game must not offer an automatic route');
   assert.equal(await page.locator('#decision-list').isVisible(), false, 'normal game must not show agent decisions');
-  await page.locator('#tools-toggle').click();
+  assert.equal(await page.locator('#tools-toggle').isVisible(), false, 'ordinary page hides integration dispatch tools');
   assert.equal(await page.locator('#station-detail').count(), 1);
   assert.equal(await page.locator('#agent-toggle').count(), 0, 'human bundle must not expose agent UI');
   await page.goto(new URL('integration.html', host).href, { waitUntil: 'networkidle' });

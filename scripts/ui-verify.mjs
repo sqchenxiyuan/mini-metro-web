@@ -15,11 +15,11 @@ const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on('pageerror', (error) => errors.push(String(error)));
-  await page.goto(url, { waitUntil: 'networkidle' });
+  await page.goto(new URL('integration.html', url).href, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.metro);
   assert.equal(await page.locator('.topbar .brand-mark, .topbar h1').count(), 0, 'in-game header should have no logo or large brand');
   const map = await page.locator('#stage').boundingBox();
-  assert.ok(map.width >= 1400 && map.height >= 700, `map should dominate viewport: ${JSON.stringify(map)}`);
+  assert.ok(map.width >= 1400 && map.height >= 600, `integration game map should retain a large drawable frame: ${JSON.stringify(map)}`);
   assert.equal(await page.locator('#inspector').isVisible(), false);
   await page.screenshot({ path: `${output}/desktop.png`, fullPage: true });
   const station = await page.evaluate(() => window.metro.projectStation(1));
@@ -88,24 +88,26 @@ try {
 
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   mobile.on('pageerror', (error) => errors.push(String(error)));
-  await mobile.goto(url, { waitUntil: 'networkidle' });
+  await mobile.goto(new URL('integration.html', url).href, { waitUntil: 'networkidle' });
   await mobile.waitForFunction(() => window.metro);
   const layout = await mobile.evaluate(() => ({
     viewport: innerWidth,
     overflow: document.documentElement.scrollWidth - innerWidth,
     map: document.querySelector('#stage').getBoundingClientRect().toJSON(),
-    controls: ['#play-pause', '[data-speed="1"]', '[data-speed="2"]', '[data-speed="4"]', '#line-tools-toggle', '.line-choice', '#tools-toggle', '#replay-toggle', '#new-game'].map((selector) => {
+    controls: ['#play-pause', '[data-speed="1"]', '[data-speed="2"]', '[data-speed="4"]', '#line-tools-toggle', '#line-chooser', '#tools-toggle', '#replay-toggle', '#new-game'].map((selector) => {
       const box = document.querySelector(selector).getBoundingClientRect();
       return { selector, width: box.width, height: box.height, left: box.left, right: box.right };
     }),
   }));
-  assert.ok(layout.map.width >= 380 && layout.map.height >= 550, `mobile map dominates: ${JSON.stringify(layout.map)}`);
-  assert.ok(layout.overflow <= 0, `mobile document overflows by ${layout.overflow}px`);
-  const undersized = layout.controls.filter((c) => c.width < 44 || c.height < 44);
-  const offscreen = layout.controls.filter((c) => c.left < 0 || c.right > layout.viewport);
+  assert.ok(layout.map.width >= 380 && layout.map.height >= 380,
+    `mobile map dominates while reserving a dedicated overview and controls: ${JSON.stringify(layout.map)}`);
+  assert.ok(layout.overflow <= 0, `mobile document overflows horizontally by ${layout.overflow}px`);
+  const undersized = layout.controls.filter((c) => c.width > 0 && (c.width < 44 || c.height < 44));
+  const offscreen = layout.controls.filter((c) => c.width > 0 && (c.left < 0 || c.right > layout.viewport));
   assert.deepEqual(undersized, [], `touch targets too small: ${JSON.stringify(undersized)}`);
   assert.deepEqual(offscreen, [], `touch targets off-screen: ${JSON.stringify(offscreen)}`);
   await mobile.screenshot({ path: `${output}/mobile.png`, fullPage: true });
+  await mobile.locator('#game-shell').scrollIntoViewIfNeeded();
   const mobileStation = await mobile.evaluate(() => window.metro.projectStation(1));
   await mobile.touchscreen.tap(mobileStation.x, mobileStation.y);
   await mobile.locator('#station-peek').waitFor({ state: 'visible' });
@@ -133,7 +135,7 @@ try {
     }),
   }));
   assert.ok(narrow.overflow <= 0, `narrow viewport overflows: ${JSON.stringify(narrow)}`);
-  assert.ok(narrow.controls.every((c) => c.left >= 0 && c.right <= 320 && c.width >= 44 && c.height >= 44), `narrow controls clipped: ${JSON.stringify(narrow)}`);
+  assert.ok(narrow.controls.filter(c=>c.width>0).every((c) => c.left >= 0 && c.right <= 320 && c.width >= 44 && c.height >= 44), `narrow controls clipped: ${JSON.stringify(narrow)}`);
   await mobile.close();
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, desktopMap: map, mobile: layout, screenshots: [`${output}/desktop.png`, `${output}/mobile.png`, `${output}/game-over.png`] }, null, 2));

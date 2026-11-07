@@ -1,8 +1,11 @@
+import type { Shape } from './types';
 export interface OverlayStation {
   id: number;
   x: number;
   y: number;
   queue: number;
+  /** Real destinations, so the reserved rectangle matches the drawn groups. */
+  queueShapes?: readonly Shape[];
   crowd: number;
   selected: boolean;
 }
@@ -93,23 +96,24 @@ export function layoutOverlays(stations: readonly OverlayStation[], viewport: { 
 
 /** Local CSS-pixel bounds of the actual WebGL geometries, including text planes. */
 export const warningCueBounds: OverlayBox = { x: 7, y: -40.5, width: 24, height: 28.5 };
-export function queueCueBounds(count: number, level: NonNullable<OverlayBox['level']>, mobile = false): OverlayBox {
+export function queueCueBounds(count: number, _level: NonNullable<OverlayBox['level']>, mobile = false,
+  groupCount?: number): OverlayBox {
   if (mobile) {
     const columns = Math.min(6, count);
     const rows = Math.ceil(count / 6);
     return { x: -columns * 11 / 2, y: -5, width: columns * 11, height: (rows - 1) * 12 + 10 };
   }
-  const icons = level === 'full' ? Math.min(count, 3) : level === 'compact' ? Math.min(count, 1) : 0;
-  const text = level === 'count' ? String(count) : count > icons ? `+${count - icons}` : '';
-  const textWidth = text ? Math.min(36, Math.max(16, text.length * 8)) : 0;
-  const occupied = icons * 11 + (text ? Math.min(27, text.length * 8) : 0);
-  const iconLeft = icons ? -occupied / 2 + 0.5 : Infinity;
-  const iconRight = icons ? -occupied / 2 + (icons - 1) * 11 + 10.5 : -Infinity;
-  const textLeft = text ? occupied / 2 - textWidth : Infinity;
-  const textRight = text ? occupied / 2 : -Infinity;
-  const x = Math.min(iconLeft, textLeft);
-  return { x, y: text ? -8.5 : -5, width: Math.max(iconRight, textRight) - x,
-    height: text ? 17 : 10 };
+  if (count <= 10) {
+    const columns = Math.min(6, count);
+    const rows = Math.ceil(count / 6);
+    return { x: -columns * 11 / 2, y: -5, width: columns * 11,
+      height: (rows - 1) * 12 + 10 };
+  }
+  // Unknown destinations reserve all ten shapes; actual destinations size exactly.
+  const groups = groupCount ?? 10;
+  const columns = Math.min(groups, 4), rows = Math.ceil(groups / 4);
+  return { x: -columns * 50 / 2, y: -8.5, width: columns * 50,
+    height: (rows - 1) * 20 + 17 };
 }
 
 /** In-scene cue layout. Returned rectangles are the *drawn* geometry bounds,
@@ -201,11 +205,16 @@ export function layoutSceneCues(stations: readonly OverlayStation[],
   }
   if (!mobile) for (const p of ordered) if (p.queue > 0) {
     const entry = result.get(p.id)!;
-    for (const level of ['full', 'compact', 'count'] as const) {
-      entry.queue = place(p, queueCueBounds(p.queue, level), queueCenters, level);
-      if (entry.queue) break;
-    }
-    entry.queueFallback = !entry.queue;
+    const shape = queueCueBounds(p.queue, 'full', false, p.queueShapes && new Set(p.queueShapes).size);
+    const box: OverlayBox = { x: p.x - shape.width / 2, y: p.y + 42,
+      width: shape.width, height: shape.height, level: 'full' };
+    if (box.x >= 4 && box.y >= 4 && box.x + box.width <= viewport.width - 4 &&
+      box.y + box.height <= viewport.height - 4 &&
+      !blocked.some((other) => intersects(box, other)) &&
+      !hits.some((hit) => hit.id !== p.id && intersects(box, hit.box))) {
+      entry.queue = box;
+      blocked.push(box);
+    } else entry.queueFallback = true;
   }
   return stations.map((p) => result.get(p.id)!);
 }

@@ -24,12 +24,12 @@ vi.mock('three', async (original) => {
 });
 vi.stubGlobal('window', { devicePixelRatio: 1 });
 vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
-const canvases: { width: number; height: number }[] = [];
+const canvases: { width: number; height: number; text: string[] }[] = [];
 vi.stubGlobal('document', {
   createElement: () => {
-    const canvas = { width: 0, height: 0 };
+    const canvas = { width: 0, height: 0, text: [] as string[] };
     canvases.push(canvas);
-    return { ...canvas, getContext: () => ({ clearRect() {}, fillText() {}, strokeText() {},
+    return { ...canvas, getContext: () => ({ clearRect() {}, fillText(value: string) { canvas.text.push(value); }, strokeText() {},
       set font(_v: string) {}, set textAlign(_v: string) {}, set textBaseline(_v: string) {},
       set fillStyle(_v: string) {}, set strokeStyle(_v: string) {}, set lineWidth(_v: number) {} }) };
   },
@@ -45,7 +45,8 @@ function setup(width = 390, height = 708) {
     renderer.render(state);
     const placement = layoutSceneCues(state.stations.map((station) => ({
       id: station.id, ...renderer.project(station.x, station.y),
-      queue: station.queue.length, crowd: station.crowd, selected: false,
+      queue: station.queue.length, queueShapes: station.queue.map((passenger) => passenger.shape),
+      crowd: station.crowd, selected: false,
     })), { width, height });
     renderer.updateSceneCues(state, placement);
     return placement;
@@ -147,6 +148,87 @@ describe('station scene cues', () => {
     const placed = update().find((item) => item.id === state.stations[0].id)!;
     expect(placed.queue).not.toBeNull();
     expect(cues().getObjectByName(`queue-${state.stations[0].id}`)?.getObjectByName('queue-connector')).toBeUndefined();
+    renderer.dispose();
+  });
+  it('shows each of ten desktop passengers individually below its station', () => {
+    const { renderer, state, update, cues } = setup(1024, 768);
+    const p = state.stations[0];
+    p.queue = Array.from({ length: 10 }, (_, i) => ({ id: 501 + i,
+      shape: i % 2 ? 'square' as const : 'triangle' as const, born: 0, transfers: 0 }));
+    const placed = update().find((item) => item.id === p.id)!;
+    expect(placed.queue).toMatchObject({ level: 'full', height: 22 });
+    const anchor = renderer.project(p.x, p.y, 0.6);
+    expect(placed.queue!.x + placed.queue!.width / 2).toBeCloseTo(anchor.x);
+    expect(placed.queue!.y).toBeGreaterThan(anchor.y + 36);
+    const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
+    expect(queue.children.map((child) => child.userData.passengerId)).toEqual(p.queue.map((v) => v.id));
+    expect(queue.children.map((child) => child.userData.shape)).toEqual(p.queue.map((v) => v.shape));
+    expect(queue.children.some((child) => child instanceof THREE.Mesh &&
+      (child.material as THREE.MeshBasicMaterial).map)).toBe(false);
+    renderer.dispose();
+  });
+  it('groups eleven and more by destination in stable shape order with exact multipliers', () => {
+    const { renderer, state, update, cues } = setup(1440, 900);
+    const p = state.stations[0];
+    p.crowd = 0;
+    p.queue = [
+      ...Array.from({ length: 9 }, (_, i) => ({ id: 601 + i, shape: 'triangle' as const, born: 0, transfers: 0 })),
+      { id: 610, shape: 'square', born: 0, transfers: 0 },
+      { id: 611, shape: 'circle', born: 0, transfers: 0 },
+    ];
+    const before = JSON.stringify(state);
+    const placed = update().find((item) => item.id === p.id)!;
+    const queue = cues().getObjectByName(`queue-${p.id}`) as THREE.Group;
+    expect(placed.queue).toMatchObject({ level: 'full', width: 150, height: 17 });
+    expect(queue.children.filter((child) => child.userData.shape).map((icon) => icon.userData.shape))
+      .toEqual(['circle', 'triangle', 'square']);
+    expect(queue.children.some((child) => child.userData.passengerId)).toBe(false);
+    const labels = queue.children.filter((child) => child instanceof THREE.Mesh &&
+      (child.material as THREE.MeshBasicMaterial).map);
+    expect(labels).toHaveLength(3);
+    expect(canvases.slice(-3).map((canvas) => canvas.text)).toEqual([['×1'], ['×9'], ['×1']]);
+    expect(JSON.stringify(state)).toBe(before);
+    renderer.dispose();
+  });
+  it('keeps all ten destination groups and multi-digit labels inside the desktop cue rectangle', () => {
+    const { renderer, state, update, cues } = setup(1440, 900);
+    const p = state.stations[0];
+    p.crowd = 0;
+    const shapes = ['circle', 'triangle', 'square', 'diamond', 'star', 'cross', 'pentagon', 'egg', 'gem', 'wedge'] as const;
+    p.queue = shapes.flatMap((shape, index) => Array.from({ length: index + 12 }, (_, n) => ({
+      id: index * 100 + n, shape, born: 0, transfers: 0,
+    })));
+    const placed = update().find((item) => item.id === p.id)!;
+    expect(placed.queue).not.toBeNull();
+    expect(placed.queue!.y).toBeGreaterThan(renderer.project(p.x, p.y, 0.6).y + 36);
+    const queue = cues().getObjectByName(`queue-${p.id}`)!;
+    expect(queue.children.filter((child) => child.userData.shape).map((icon) => icon.userData.shape))
+      .toEqual(shapes);
+    expect(canvases.slice(-10).map((canvas) => canvas.text[0]))
+      .toEqual(shapes.map((_, index) => `×${index + 12}`));
+    const actual = new THREE.Box3().setFromObject(queue);
+    expect(actual.min.x).toBeGreaterThanOrEqual(placed.queue!.x - 0.01);
+    expect(actual.max.x).toBeLessThanOrEqual(placed.queue!.x + placed.queue!.width + 0.01);
+    expect(actual.min.y).toBeGreaterThanOrEqual(placed.queue!.y - 0.01);
+    expect(actual.max.y).toBeLessThanOrEqual(placed.queue!.y + placed.queue!.height + 0.01);
+    renderer.dispose();
+  });
+  it('centers the real grouped icons under their owner even when caller only supplies a queue total', () => {
+    const { renderer, state, cues } = setup(1440, 900);
+    const p = state.stations[0];
+    p.crowd = 0;
+    p.queue = Array.from({ length: 12 }, (_, i) => ({ id: 300 + i,
+      shape: 'triangle' as const, born: 0, transfers: 0 }));
+    renderer.render(state);
+    const placements = layoutSceneCues(state.stations.map((station) => ({
+      id: station.id, ...renderer.project(station.x, station.y, 0.6),
+      queue: station.queue.length, crowd: station.crowd, selected: false,
+    })), { width: 1440, height: 900 });
+    renderer.updateSceneCues(state, placements);
+    const queue = cues().getObjectByName(`queue-${p.id}`)!;
+    const actual = new THREE.Box3().setFromObject(queue);
+    expect(queue.position.x).toBeCloseTo(renderer.project(p.x, p.y, 0.6).x);
+    expect((actual.min.x + actual.max.x) / 2).toBeGreaterThan(renderer.project(p.x, p.y, 0.6).x - 8);
     renderer.dispose();
   });
   it('omits an oversized mobile pile rather than drawing a four-digit count', () => {

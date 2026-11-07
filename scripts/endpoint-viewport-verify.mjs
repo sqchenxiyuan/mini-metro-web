@@ -1,0 +1,8 @@
+import assert from 'node:assert/strict';
+import {chromium} from '@playwright/test';import {createServer} from 'vite';import {browserLaunchOptions} from './browser-launch.mjs';
+const server=await createServer({server:{host:'127.0.0.1',port:0},logLevel:'error'});await server.listen();const browser=await chromium.launch(browserLaunchOptions());
+try{for(const [w,h] of [[568,320],[390,844]]){
+ const page=await browser.newPage({viewport:{width:w,height:h},isMobile:true,hasTouch:true});await page.goto(server.resolvedUrls.local[0],{waitUntil:'networkidle'});await page.waitForFunction(()=>window.metro);await page.evaluate(()=>{const m=window.metro;m.restart({mode:'creative',seed:77});m.pause();m.submit({action:{type:'route',line:0,stops:[1,2]}})});await page.waitForFunction(()=>document.querySelectorAll('[data-route-handle]').length===2);
+ const record=await page.evaluate(()=>{const stage=document.querySelector('#stage').getBoundingClientRect();const station=[1,2].map(id=>window.metro.projectStation(id));return {stage:stage.toJSON(),station,handles:[...document.querySelectorAll('[data-route-handle]')].map(n=>({name:n.getAttribute('data-route-handle'),x:stage.left+Number(n.getAttribute('cx')),y:stage.top+Number(n.getAttribute('cy'))}))}});
+ console.log(JSON.stringify({size:[w,h],record}));assert.equal(record.handles.length,2);for(const hnd of record.handles)assert.ok(hnd.x>=record.stage.left+11&&hnd.x<=record.stage.right-11&&hnd.y>=record.stage.top+11&&hnd.y<=record.stage.bottom-11,`handle ${hnd.name} must be fully reachable in stage`);await page.close();
+}}finally{await browser.close();await server.close();}

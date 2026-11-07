@@ -91,6 +91,26 @@ describe('anchored WebGL cue placement', () => {
     expect(placed[0].queue!.y).toBe(222);
     expect(placed[0].queueFallback).toBe(false);
   });
+  it('does not place a grouped desktop queue over another station hit target', () => {
+    const stations = [
+      { id: 1, x: 500, y: 300, queue: 11, queueShapes: ['triangle', 'square'] as const,
+        crowd: 0, selected: false },
+      { id: 2, x: 522, y: 348, queue: 0, crowd: 0, selected: false },
+    ];
+    const placed = layoutSceneCues(stations, { width: 1024, height: 768 });
+    expect(placed[0].queue).toBeNull();
+    expect(placed[0].queueFallback).toBe(true);
+    expect(stations[0].x).toBe(500);
+  });
+  it('does not place a grouped cue on a train badge or outside the stage', () => {
+    const station = { id: 1, x: 500, y: 300, queue: 11,
+      queueShapes: ['triangle', 'square'] as const, crowd: 0, selected: false };
+    const reserved = [{ x: 450, y: 338, width: 100, height: 30 }];
+    expect(layoutSceneCues([station], { width: 1024, height: 768 }, reserved)[0])
+      .toMatchObject({ queue: null, queueFallback: true });
+    expect(layoutSceneCues([{ ...station, x: 20 }], { width: 1024, height: 768 })[0])
+      .toMatchObject({ queue: null, queueFallback: true });
+  });
 });
 
 describe('map information overlay placement', () => {
