@@ -18,8 +18,11 @@ try {
     const station = await page.evaluate(() => window.metro.projectStation(1));
     if (station.x > 0 && station.x < width && station.y > 0 && station.y < height) {
       await page.mouse.click(station.x, station.y);
-      assert.equal(await page.locator('#station-peek:visible, #station-detail:visible').count(), 0,
-        'station tap does not open passenger-statistics card');
+      assert.equal(await page.locator('#station-peek:visible').count(), 1,
+        'ordinary station tap shows its waiting passengers');
+      assert.match(await page.locator('#station-peek').textContent(), /车站 1 · 候车/);
+      assert.equal(await page.locator('#station-detail:visible').count(), 0,
+        'ordinary page does not expose the AI inspector station card');
       assert.equal(await page.locator('#context-actions:visible [data-action="interchange"]').count() <= 1, true);
     }
     const line = page.locator('[data-line="0"]');

@@ -201,6 +201,7 @@ function resetView(): void {
   gestureKind = null;
   gesturePointer = null;
   handleLayer.querySelector('[data-loop-tip]')?.remove();
+  handleLayer.querySelector('[data-route-tip]')?.remove();
   panning = null;
   insertAt = null;
   decisionPage = 0;
@@ -522,6 +523,7 @@ endpointLayer.addEventListener('click', e => e.stopPropagation());
 function paintHandles(): void {
   const rect = stage.getBoundingClientRect();
   const draggedTip = handleLayer.querySelector('[data-loop-tip]');
+  const routeTip = handleLayer.querySelector('[data-route-tip]');
   handleLayer.replaceChildren();
   const visible = new Set<string>();
   handlePositions.clear();
@@ -594,12 +596,30 @@ function paintHandles(): void {
         !controller.getState().lines[armedEndpoint.line]?.stops.length) armedEndpoint = null;
   }
   if (draggedTip) handleLayer.append(draggedTip);
+  if (routeTip) handleLayer.append(routeTip);
 }
 function clearGesture(): void {
   draft = null; insertAt = null; pointerStation = null; gestureLine = null;
   gestureKind = null; loopEdge = null; additions = []; gesturePointer = null;
   renderer.clearPreview();
   handleLayer.querySelector('[data-loop-tip]')?.remove();
+  handleLayer.querySelector('[data-route-tip]')?.remove();
+}
+function drawRouteTip(e: PointerEvent): void {
+  handleLayer.querySelector('[data-route-tip]')?.remove();
+  if (!draft || !moved || gestureLine === null || gestureKind === 'insert' || gestureKind === 'loop') return;
+  const end = draft[gestureKind === 'endpoint' && endpointSide === 'start' ? 0 : draft.length - 1];
+  const station = controller.getState().stations.find(p => p.id === end);
+  if (!station) return;
+  const anchor = renderer.project(station.x, station.y, 0.6);
+  const rect = stage.getBoundingClientRect();
+  const tip = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  tip.setAttribute('data-route-tip', '');
+  tip.setAttribute('x1', String(anchor.x)); tip.setAttribute('y1', String(anchor.y));
+  tip.setAttribute('x2', String(e.clientX - rect.left)); tip.setAttribute('y2', String(e.clientY - rect.top));
+  tip.setAttribute('stroke', LINE_COLORS[gestureLine]);
+  tip.setAttribute('stroke-width', '3'); tip.setAttribute('stroke-dasharray', '7 5');
+  handleLayer.append(tip);
 }
 function passengerUnderPointer(x:number,y:number): boolean {
   if(!(renderer instanceof MobileMapRenderer))return false;
@@ -737,30 +757,44 @@ stage.addEventListener('pointermove', (e) => {
   }
   const id = nearest(e.clientX, e.clientY);
   if (gestureKind === 'endpoint') {
-    if (id === null) return;
-    if (id === originalStops[endpointSide === 'start' ? 0 : originalStops.length - 1] && additions.length) {
-      additions = []; draft = [...originalStops]; renderer.clearPreview(); return;
+    if (id === null) {
+      if (draftLoop) { draftLoop = false; preview(); }
+      drawRouteTip(e); return;
     }
-    if (id === additions.at(-1)) return;
+    if (id === originalStops[endpointSide === 'start' ? 0 : originalStops.length - 1] && additions.length) {
+      additions = []; draft = [...originalStops]; draftLoop = false; renderer.clearPreview(); drawRouteTip(e); return;
+    }
+    if (id === additions.at(-1)) {
+      if (draftLoop) { draftLoop = false; preview(); }
+      drawRouteTip(e); return;
+    }
+    if (id === originalStops[endpointSide === 'start' ? originalStops.length - 1 : 0] &&
+        originalStops.length + additions.length >= 3) {
+      draft = extensionStops(originalStops, endpointSide, additions) ?? [...originalStops];
+      draftLoop = true; preview(); drawRouteTip(e); return;
+    }
     if (id === additions.at(-2)) additions.pop();
     else if (!originalStops.includes(id) && !additions.includes(id)) additions.push(id);
     draft = extensionStops(originalStops, endpointSide, additions) ?? [...originalStops];
-    preview();
+    draftLoop = false; preview(); drawRouteTip(e);
     return;
   }
-  if (id === null || id === draft.at(-1)) return;
+  if (id === null || id === draft.at(-1)) {
+    if (draftLoop) { draftLoop = false; preview(); }
+    drawRouteTip(e); return;
+  }
   if (gestureKind === 'insert' && insertAt !== null) {
     if (!originalStops.includes(id)) {
       draft = [...originalStops]; draft.splice(insertAt, 0, id); preview();
     }
     return;
   }
-  if (id === draft[0] && draft.length >= 3) { draftLoop = true; preview(); return; }
+  if (id === draft[0] && draft.length >= 3) { draftLoop = true; preview(); drawRouteTip(e); return; }
   if (draft.length > 1 && id === draft.at(-2)) {
-    draft.pop(); draftLoop = false; preview(); return;
+    draft.pop(); draftLoop = false; preview(); drawRouteTip(e); return;
   }
-  if (draft.includes(id)) return;
-  draft.push(id); draftLoop = false; preview();
+  if (draft.includes(id)) { drawRouteTip(e); return; }
+  draft.push(id); draftLoop = false; preview(); drawRouteTip(e);
 });
 function crowdRemaining(crowd: number): string {
   return `拥挤还剩 ${Math.ceil((RULES.crowdTicks - crowd) / RULES.hz)} 秒`;
@@ -818,7 +852,8 @@ function finishDraw(e: PointerEvent): void {
       if (stops) act({ type: 'route', line: gestureLine, stops, loop: false }, '拉开环线轨道。');
     }
   } else if (draft && moved && draft.length >= 2 && gestureLine !== null &&
-      (gestureKind !== 'endpoint' || additions.length) &&
+      (gestureKind !== 'endpoint' || additions.length || draftLoop) &&
+      !(gestureKind === 'endpoint' && draftLoop && controller.getState().mode === 'extreme' && originalStops.length) &&
       (gestureKind !== 'insert' || draft.length > originalStops.length) &&
       (gestureKind !== 'body' || draft.length > 1)) {
     const first = !controller.getState().lines.some(l => l.stops.length);
