@@ -20,10 +20,18 @@ try {
   console.log(JSON.stringify({viewport:[w,h],partiallyVisibleStations:incomplete.map(g=>g.stationId)}));
   if(w===568) {
     const opening=grouped.find(g=>g.stationId===observed.station.id);
-    assert.ok(opening?.groups.every(g=>g.visible),'default short-landscape camera should include all groups at its opening station');
-    const point=observed.stats.bounds.find(p=>p.id===observed.station.id);
-    const y=(point.y-observed.stats.center.y)*observed.stats.zoom+observed.stage.height/2;
-    assert.ok(y-5>=12&&y+39<=observed.stage.height-12,'default crowded station hit target keeps 12px stage margin');
+    const roof=await page.evaluate(id=>{const node=document.querySelector(`#station-layer .station-label[data-station="${id}"]`);const box=node.getBoundingClientRect(),stage=document.querySelector('#stage').getBoundingClientRect();return {x:box.left-stage.left+box.width/2,y:box.top-stage.top+5,box:box.toJSON()};},observed.station.id);
+    const margin=12;
+    const groups=opening?.groups.map(g=>({shape:g.shape,count:g.count,x:g.x,y:g.y,
+      // Group icon extends 5px left and label extends 42px right; jitter is already in x/y.
+      contained:g.x-5>=margin && g.x+42<=observed.stage.width-margin &&
+        g.y-8>=margin && g.y+8<=observed.stage.height-margin}));
+    await page.screenshot({path:`${output}/${w}x${h}-dense.png`});
+    console.log(JSON.stringify({viewport:[w,h],stage:observed.stage,roof,groups,center:observed.stats.center,zoom:observed.stats.zoom}));
+    assert.ok(groups?.every(g=>g.contained),'default short-landscape camera keeps every opening station queue icon and exact-count label inside 12px stage margin');
+    assert.ok(roof.box.left>=observed.stage.x+margin && roof.box.right<=observed.stage.x+observed.stage.width-margin &&
+      roof.box.top>=observed.stage.y+margin && roof.box.bottom<=observed.stage.y+observed.stage.height-margin,
+      'default crowded station complete 44px hit target keeps 12px stage margin');
   }
   const owner=grouped.find(g=>g.stationId===observed.station.id);
   assert.ok(owner,'first station must have compact destination groups');

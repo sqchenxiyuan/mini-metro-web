@@ -5,6 +5,17 @@ import { MetroController } from '../src/browser';
 import { createState, hash } from '../src/rules';
 
 describe('controller visual event boundary', () => {
+  it('notifies once per explicit step or submit after control transfer', () => {
+    const controller = new MetroController({ mode: 'creative', seed: 77 });
+    const snapshots: number[] = [];
+    controller.onChange = () => snapshots.push(controller.getState().tick);
+    controller.step(1);
+    expect(snapshots).toEqual([1]);
+    snapshots.length = 0;
+    controller.submit({ action: { type: 'wait' } });
+    expect(snapshots).toEqual([1]);
+    controller.dispose();
+  });
   it('returns independent atomic render snapshots and consumes transient events once', () => {
     const controller = new MetroController({ mode: 'creative', seed: 77 });
     const [a, b] = controller.getState().stations;

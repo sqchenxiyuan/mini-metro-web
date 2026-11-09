@@ -39,12 +39,15 @@ async function gesture(page, touch) {
   let last = null;
   const send = (type, p) => cdp.send('Input.dispatchTouchEvent', { type,
     touchPoints: type === 'touchEnd' || type === 'touchCancel' ? [] : [{ id: 1, x: p.x, y: p.y, radiusX: 4, radiusY: 4, force: 1 }] });
+  const settled = async p => page.waitForFunction(({ x, y }) =>
+    window.__lastTouchMove && Math.hypot(window.__lastTouchMove.x - x, window.__lastTouchMove.y - y) < .05,
+  p);
   return {
     async down(p) { last = p; await send('touchStart', p); },
     async move(p) { const from = last; for (let i = 1; i <= 12; i++)
       await send('touchMove', { x: from.x + (p.x - from.x) * i / 12, y: from.y + (p.y - from.y) * i / 12 }); last = p;
-      await page.waitForTimeout(40); },
-    async moveDirect(p) { await send('touchMove', p); last = p; await page.waitForTimeout(40); },
+      await settled(p); },
+    async moveDirect(p) { await send('touchMove', p); last = p; await settled(p); },
     async up() { await send('touchEnd', last); },
     async cancel() { await send('touchCancel', last); },
     async close() { await cdp.detach(); },
@@ -98,6 +101,10 @@ try {
     const errors = []; page.on('pageerror', error => errors.push(String(error)));
     await page.goto(server.resolvedUrls.local[0], { waitUntil: 'networkidle' });
     await page.waitForFunction(() => window.metro);
+    // CDP acknowledges dispatch before Chromium necessarily delivers pointermove.
+    // Wait for the event itself, not a timer, then assert the independently read SVG.
+    await page.evaluate(()=>document.querySelector('#stage').addEventListener('pointermove',e=>{
+      window.__lastTouchMove={x:e.clientX,y:e.clientY};}));
     for (const [mode, kind, side] of [['normal', 'body', null], ['normal', 'endpoint', 'end'],
       ['normal', 'endpoint', 'start'], ['extreme', 'endpoint', 'end'], ['extreme', 'endpoint', 'start']]) {
       await reset(page, mode);
@@ -128,6 +135,8 @@ try {
         y: anchor.y + (target.y - anchor.y) * .35 };
       await drag.move(midway);
       const tip = await checkTip(page, anchor, midway, `${width} ${mode} ${kind} ${side} first mid-route`);
+      if (touch && mode === 'normal' && kind === 'endpoint' && side === 'end')
+        await page.screenshot({path:'/opt/data/cache/scratch/metro-acceptance/390x844-native-route-tip.png'});
       if (kind === 'body' && mode === 'normal') {
         const onRoute = { x: anchor.x + (midway.x - anchor.x) * .6,
           y: anchor.y + (midway.y - anchor.y) * .6 };

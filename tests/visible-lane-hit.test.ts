@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { applyAction, copy, createState, LINE_COLORS } from '../src/rules';
 import { MetroRenderer, hitTestVisibleLane } from '../src/renderer';
+import { Mobile3DRenderer } from '../src/mobile-3d';
 
 vi.mock('three', async (original) => {
   const actual = await original<typeof import('three')>();
@@ -47,6 +48,39 @@ function visibleMiddle(renderer: MetroRenderer, lineId: number) {
 }
 
 describe('visible lane route insertion hit testing', () => {
+  it('does not hit an unpainted mobile rail', () => {
+    const { renderer, state } = setup();
+    const adapter = Object.create(Mobile3DRenderer.prototype) as Mobile3DRenderer;
+    (adapter as any).scene = renderer;
+    const center = renderer.project(0, 0, .43);
+    expect(adapter.hitTestLane(state, 0, center)).toBeNull();
+    renderer.dispose();
+  });
+  it('touches the painted warped orchard bend without inventing a new route or tunnel', () => {
+    const { renderer, state, a, b } = setup();
+    state.mode = 'creative'; state.city = 'orchard';
+    a.x = -2; a.y = -8; b.x = 2; b.y = -1;
+    state.lines = LINE_COLORS.map((_, id) => ({ id, stops: id === 0 ? [a.id, b.id] : [], loop: false }));
+    const adapter = Object.create(Mobile3DRenderer.prototype) as Mobile3DRenderer;
+    (adapter as any).scene = renderer;
+    (adapter as any).prepare(state);
+    renderer.setTrackSource(state, (adapter as any).ys);
+    renderer.setRiverTransform((x, y) => (adapter as any).world(x, y));
+    renderer.setZoom(1.8);
+    renderer.render((adapter as any).visualState ?? (adapter as any).prepare(state), 0);
+    (renderer as any).camera.updateMatrixWorld();
+    const painted = (renderer as any).tracks.children.find((mesh: THREE.Mesh) =>
+      (mesh.material as THREE.MeshStandardMaterial).color.getHexString() ===
+        new THREE.Color(LINE_COLORS[0]).getHexString()) as THREE.Mesh;
+    const path = (painted.geometry as THREE.TubeGeometry).parameters.path;
+    const samples = Array.from({ length: 17 }, (_, i) => {
+      const p = path.getPoint((i + 2) / 20);
+      return renderer.project(p.x, p.z, p.y);
+    });
+    expect(samples.some(p => adapter.hitTestLane(state, 0, p, 12) === null)).toBe(false);
+    expect(state.resources.tunnels).toBe(100);
+    renderer.dispose();
+  });
   it('hits the selected outer colored lane instead of the centerline and inserts on its edge at both zoom levels', () => {
     const { renderer, state, a, b, c } = setup();
     const selectedLine = 6;

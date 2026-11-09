@@ -2,6 +2,7 @@
 import { LINE_COLORS, SHAPES, riverCount, riverX, segments, trackPoints } from './rules';
 import { deriveTrackLayout } from './track-layout';
 import type { Passenger, Shape, State, Station } from './types';
+import { crowdFillFraction, groupJitter, passengerJitter } from './visual-crowd';
 
 export interface MapStation { id: number; x: number; y: number; sourceY: number; shape: Shape; passengers: Passenger[]; crowd: number; interchange: boolean }
 const GLYPH_SIZE = 12, GLYPH_PITCH_X = 14, GLYPH_PITCH_Y = 15;
@@ -370,8 +371,8 @@ export class MobileMapRenderer {
   clearPreview(): void { this.preview = null; this.draw(); }
   updateSceneCues(_state?: Readonly<State>, _placements?: readonly unknown[]): void { /* All mobile cues are drawn in the single canvas during render. */ }
   cueStats() { return { queueCount: this.points.filter(p=>p.passengers.length).length, warningCount: 0,
-    ringCount: this.points.filter(p=>p.crowd).length, queueStationIds: this.points.filter(p=>p.passengers.length).map(p=>p.id),
-    warningStationIds: [] as number[], ringStationIds: this.points.filter(p=>p.crowd).map(p=>p.id),
+    ringCount: 0, queueStationIds: this.points.filter(p=>p.passengers.length).map(p=>p.id),
+    warningStationIds: [] as number[], ringStationIds: [] as number[],
     bounds: this.points.flatMap(p => {const b=pileBounds(p); if(!b)return []; const q=this.project(p.x/60,p.sourceY);
       return [{ id:p.id,kind:'queue' as const,x:q.x-b.width*this.zoom/2,y:q.y+42*this.zoom,width:b.width*this.zoom,height:b.height*this.zoom }]; }) }; }
   /** Every ID is accounted for; compact groups are separate from painted passenger shapes. */
@@ -462,6 +463,7 @@ export class MobileMapRenderer {
   private draw(): void {
     if(!this.state || !this.points.length) return;
     const begin=performance.now(), c=this.context, ratio=this.canvas.width/this.size.width, paths=shapePaths();
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     c.setTransform(ratio,0,0,ratio,0,0);
     c.fillStyle='#fff8f5'; c.fillRect(0,0,this.size.width,this.size.height);
     const {width,height}=this.size;
@@ -520,8 +522,14 @@ export class MobileMapRenderer {
       const x=(p.x-this.center.x)*this.zoom+width/2, y=(p.y-this.center.y)*this.zoom+height/2;
       if(x>=-25&&x<=width+25&&y>=-25&&y<=height+25) {
         c.save();c.translate(x,y);c.scale(15*this.zoom,15*this.zoom);
-        c.lineWidth=.34;c.strokeStyle=p.crowd?'#cc634e':'#fffaf7';c.stroke(paths[p.shape]);
-        c.fillStyle=ink[p.shape];c.fill(paths[p.shape]);c.restore();
+        c.lineWidth=.34;c.strokeStyle='#fffaf7';c.stroke(paths[p.shape]);
+        c.fillStyle=ink[p.shape];c.fill(paths[p.shape]);
+        const fraction=crowdFillFraction(p.crowd,this.state.mode);
+        if(fraction) {
+          c.save();c.clip(paths[p.shape]);c.fillStyle='rgba(223,49,60,.56)';
+          c.fillRect(-1,1-2*fraction,2,2*fraction);c.restore();
+        }
+        c.restore();
         c.font='10px system-ui';c.fillStyle='#786b87';c.textAlign='center';c.fillText(String(p.id),x,y+32*this.zoom);
       }
       const display=queueDisplay(p);
@@ -529,8 +537,9 @@ export class MobileMapRenderer {
         const groups=display.groups.map(({shape,count},index)=>{
           const row=Math.floor(index/GROUP_COLUMNS),column=index%GROUP_COLUMNS;
           const rowSize=Math.min(GROUP_COLUMNS,display.groups.length-row*GROUP_COLUMNS);
-          const px=x-rowSize*GROUP_PITCH_X*this.zoom/2+(column+.5)*GROUP_PITCH_X*this.zoom;
-          const py=y+(48+row*GROUP_PITCH_Y)*this.zoom;
+          const jitter=groupJitter(p.passengers.filter(rider=>rider.shape===shape),this.state!.tick,reducedMotion);
+          const px=x-rowSize*GROUP_PITCH_X*this.zoom/2+(column+.5)*GROUP_PITCH_X*this.zoom+jitter.x;
+          const py=y+(48+row*GROUP_PITCH_Y)*this.zoom+jitter.y;
           const radius=GROUP_SIZE/2*this.zoom;
           const visible=px-GROUP_PITCH_X*this.zoom/2>=0&&px+GROUP_PITCH_X*this.zoom/2<=width&&
             py-radius>=0&&py+radius<=height;
@@ -553,8 +562,9 @@ export class MobileMapRenderer {
       for(let index=0;index<p.passengers.length;index++) {
         const passenger=p.passengers[index];
         const row=Math.floor(index/6), size=Math.min(6,p.passengers.length-row*6);
-        const px=x-size*GLYPH_PITCH_X*this.zoom/2+((index%6)+.5)*GLYPH_PITCH_X*this.zoom;
-        const py=y+(48+row*GLYPH_PITCH_Y)*this.zoom;
+        const jitter=passengerJitter(passenger.id,passenger.born,this.state.tick,reducedMotion);
+        const px=x-size*GLYPH_PITCH_X*this.zoom/2+((index%6)+.5)*GLYPH_PITCH_X*this.zoom+jitter.x;
+        const py=y+(48+row*GLYPH_PITCH_Y)*this.zoom+jitter.y;
         const radius=GLYPH_SIZE/2*this.zoom;
         if(px+radius<=0||px-radius>=width||py+radius<=0||py-radius>=height) continue;
         c.save();c.translate(px,py);c.scale(GLYPH_SIZE/2*this.zoom,GLYPH_SIZE/2*this.zoom);

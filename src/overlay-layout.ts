@@ -28,21 +28,6 @@ const intersects = (a: OverlayBox, b: OverlayBox, pad = 2): boolean =>
   a.x < b.x + b.width + pad && a.x + a.width + pad > b.x &&
   a.y < b.y + b.height + pad && a.y + a.height + pad > b.y;
 
-/** Clip a line to an axis-aligned hit target; include its visible border. */
-function crossesBox(ax: number, ay: number, bx: number, by: number, box: OverlayBox): boolean {
-  let near = 0, far = 1;
-  for (const [a, d, low, high] of [
-    [ax, bx - ax, box.x, box.x + box.width],
-    [ay, by - ay, box.y, box.y + box.height],
-  ]) {
-    if (Math.abs(d) < 1e-9) { if (a < low || a > high) return false; continue; }
-    const enter = (low - a) / d, leave = (high - a) / d;
-    near = Math.max(near, Math.min(enter, leave));
-    far = Math.min(far, Math.max(enter, leave));
-    if (near > far) return false;
-  }
-  return true;
-}
 
 /** Display-only, deterministic placement in CSS pixels; never writes to game state. */
 export function layoutOverlays(stations: readonly OverlayStation[], viewport: { width: number; height: number },
@@ -98,26 +83,26 @@ export function layoutOverlays(stations: readonly OverlayStation[], viewport: { 
 export const warningCueBounds: OverlayBox = { x: 7, y: -40.5, width: 24, height: 28.5 };
 export function queueCueBounds(count: number, _level: NonNullable<OverlayBox['level']>, mobile = false,
   groupCount?: number): OverlayBox {
-  if (mobile) {
+  if (mobile && count <= 10) {
     const columns = Math.min(6, count);
     const rows = Math.ceil(count / 6);
-    return { x: -columns * 11 / 2, y: -5, width: columns * 11, height: (rows - 1) * 12 + 10 };
+    return { x: -columns * 11 / 2 - 2, y: -7, width: columns * 11 + 4, height: (rows - 1) * 12 + 14 };
   }
   if (count <= 10) {
     const columns = Math.min(6, count);
     const rows = Math.ceil(count / 6);
-    return { x: -columns * 11 / 2, y: -5, width: columns * 11,
-      height: (rows - 1) * 12 + 10 };
+    return { x: -columns * 11 / 2 - 2, y: -7, width: columns * 11 + 4,
+      height: (rows - 1) * 12 + 14 };
   }
   // Unknown destinations reserve all ten shapes; actual destinations size exactly.
   const groups = groupCount ?? 10;
   const columns = Math.min(groups, 4), rows = Math.ceil(groups / 4);
-  return { x: -columns * 50 / 2, y: -8.5, width: columns * 50,
-    height: (rows - 1) * 20 + 17 };
+  return { x: -columns * 50 / 2 - 2, y: -10.5, width: columns * 50 + 4,
+    height: (rows - 1) * 20 + 21 };
 }
 
-/** In-scene cue layout. Returned rectangles are the *drawn* geometry bounds,
- * not hypothetical cards; the warning ring remains at its station independently.
+/** In-scene cue layout. Returned rectangles include small jitter margins;
+ * crowd fill lives on the station and does not consume a floating cue box.
  */
 export function layoutSceneCues(stations: readonly OverlayStation[],
   viewport: { width: number; height: number }, reserved: readonly OverlayBox[] = []): OverlayPlacement[] {
@@ -135,8 +120,8 @@ export function layoutSceneCues(stations: readonly OverlayStation[],
       const placement: OverlayPlacement = { id: p.id, queue: null, warning: null,
         warningFallback: false, queueFallback: false };
       if (p.queue > 0) {
-        const shape = queueCueBounds(p.queue, 'full', true);
-        const box: OverlayBox = { x: p.x - shape.width / 2, y: p.y + 42,
+        const shape = queueCueBounds(p.queue, 'full', true, p.queueShapes && new Set(p.queueShapes).size);
+        const box: OverlayBox = { x: p.x + shape.x, y: p.y + 42,
           width: shape.width, height: shape.height, level: 'full' };
         if (box.x >= 4 && box.y >= 4 && box.x + box.width <= viewport.width - 4 &&
           box.y + box.height <= viewport.height - 4 &&
@@ -157,56 +142,13 @@ export function layoutSceneCues(stations: readonly OverlayStation[],
   const result = new Map(stations.map((p) => [p.id, {
     id: p.id, queue: null, warning: null, warningFallback: false, queueFallback: false,
   } as OverlayPlacement]));
-  // All candidate centers are <=36px from their anchor. Local annotation may
-  // overlap its *own* transparent target but never another station's target.
-  const warningCenters = [[0, -30], [-22, -27], [22, -27], [0, 32]];
-  const queueCenters = [[0, -30], [-22, -27], [22, -27], [0, 32]];
-  const place = (p: OverlayStation, shape: OverlayBox, centers: number[][],
-    level?: OverlayBox['level']): OverlayBox | null => {
-    for (const [dx, dy] of centers) {
-      const box = { x: p.x + dx - shape.width / 2, y: p.y + dy - shape.height / 2,
-        width: shape.width, height: shape.height, ...(level ? { level } : {}) };
-      if (box.x < 4 || box.y < 4 || box.x + box.width > viewport.width - 4 ||
-        box.y + box.height > viewport.height - 4 || blocked.some((other) => intersects(box, other)) ||
-        hits.some((hit) => hit.id !== p.id && intersects(box, hit.box))) continue;
-      if (mobile && level && Math.hypot(dx, dy) > 17) {
-        const distance = Math.hypot(dx, dy);
-        const startX = p.x + dx * 13 / distance, startY = p.y + dy * 13 / distance;
-        if (hits.some((hit) => hit.id !== p.id && crossesBox(startX, startY,
-          p.x + dx, p.y + dy, hit.box))) continue;
-      }
-      blocked.push(box);
-      return box;
-    }
-    return null;
-  };
+  // Retain only the station-owned queue; warnings never reserve map space.
   const ordered = [...stations].sort((a, b) => Number(b.selected) - Number(a.selected) ||
     b.crowd - a.crowd || a.id - b.id);
-  // On a phone the destination silhouettes are the primary game information.
-  // A crowded station already has its ring and the global alert if its verbose
-  // countdown cannot fit; allocate the small adjacent queue marks first.
-  if (mobile) for (const p of ordered) if (p.selected && p.crowd > 0) {
-    const entry = result.get(p.id)!;
-    entry.warning = place(p, warningCueBounds, warningCenters);
-    entry.warningFallback = !entry.warning;
-  }
-  if (mobile) for (const p of ordered) if (p.queue > 0) {
-    const entry = result.get(p.id)!;
-    for (const level of ['full', 'compact', 'count'] as const) {
-      entry.queue = place(p, queueCueBounds(p.queue, level), queueCenters, level);
-      if (entry.queue) break;
-    }
-    entry.queueFallback = !entry.queue;
-  }
-  for (const p of ordered) if (p.crowd > 0 && !result.get(p.id)!.warning) {
-    const entry = result.get(p.id)!;
-    entry.warning = place(p, warningCueBounds, warningCenters);
-    entry.warningFallback = !entry.warning;
-  }
   if (!mobile) for (const p of ordered) if (p.queue > 0) {
     const entry = result.get(p.id)!;
     const shape = queueCueBounds(p.queue, 'full', false, p.queueShapes && new Set(p.queueShapes).size);
-    const box: OverlayBox = { x: p.x - shape.width / 2, y: p.y + 42,
+    const box: OverlayBox = { x: p.x + shape.x, y: p.y + 42,
       width: shape.width, height: shape.height, level: 'full' };
     if (box.x >= 4 && box.y >= 4 && box.x + box.width <= viewport.width - 4 &&
       box.y + box.height <= viewport.height - 4 &&

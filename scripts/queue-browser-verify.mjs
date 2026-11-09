@@ -38,8 +38,7 @@ try {
    assert.equal(await dialog.locator('[data-queue-shape]').count()>0,true,'last dense station reachable by keyboard');
    await dialog.locator('#queue-browser-close').click();
    assert.equal(await page.evaluate(()=>window.metro.hash()),state.hash);
-   console.log(JSON.stringify({viewport:[width,height],stations:grouped.length,lastReachable:true,hashUnchanged:true}));
-   await page.close();continue;
+   console.log(JSON.stringify({viewport:[width,height],lastReachable:true,hashUnchanged:true}));
   }
   for(const station of grouped) {
    await open.click();
@@ -73,9 +72,15 @@ try {
    await page.waitForTimeout(80);
    const focus=await page.evaluate(()=>({stats:window.metro.mobileMapStats(),stage:document.querySelector('#stage').getBoundingClientRect().toJSON()}));
    const groups=focus.stats.queueGroups.find(g=>g.stationId===station.id)?.groups;
-   assert.ok(groups?.every(g=>g.visible),`station ${station.id}: queue reachable after explicit focus at ${width}x${height}`);
+   assert.ok(groups?.every(g=>g.visible),`station ${station.id}: queue reachable after explicit focus at ${width}x${height}: ${JSON.stringify({groups,stage:focus.stage,center:focus.stats.center,zoom:focus.stats.zoom})}`);
    const box=await page.locator(`[data-station="${station.id}"]`).boundingBox();
    const stage=focus.stage;
+
+   assert.ok(box,`station ${station.id}: focused 44px target is present at ${width}x${height}: ${JSON.stringify({groups,stage,zoom:focus.stats.zoom,center:focus.stats.center,projection:await page.evaluate(id=>window.metro.projectStation(id),station.id)})}`);
+   assert.equal(box.width,44,`station ${station.id}: focused target stays exactly 44px wide`);
+   assert.equal(box.height,44,`station ${station.id}: focused target stays exactly 44px high`);
+   assert.ok(groups?.every(g=>g.x-8>=0&&g.x+42<=stage.width&&g.y-8>=0&&g.y+8<=stage.height),
+    `station ${station.id}: complete grouped pile (icon and count) fits focused stage at ${width}x${height}: ${JSON.stringify({groups,stage})}`);
    if(width===568&&stageBeforeFocus>stage.height)
     assert.equal(stageBeforeFocus-stage.height,44,'offscreen-owner cue reserves a 44px row during focus');
    assert.ok(box&&box.x>=stage.x+12&&box.x+box.width<=stage.right-12&&box.y>=stage.y+12&&box.y+box.height<=stage.bottom-12,

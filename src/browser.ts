@@ -98,7 +98,7 @@ export class MetroController {
   }
   submit(decision: Decision, source = 'script'): ActionResult {
     if (this.player) throw new Error('回放模式不能操作，请返回新局');
-    this.takeControl();
+    this.takeControl(false);
     const result = this.session.submit(decision, source);
     this.previousMotion = null;
     this.onChange();
@@ -106,7 +106,7 @@ export class MetroController {
   }
   step(ticks = 1): State {
     if (this.player) throw new Error('回放模式请使用 seek');
-    this.takeControl();
+    this.takeControl(false);
     this.paused = true;
     this.session.step(ticks);
     this.previousMotion = null;
@@ -134,12 +134,12 @@ export class MetroController {
     this.pending?.abort(new Error('控制权已切换'));
     this.pending = null;
   }
-  takeControl(): void {
+  takeControl(notify = true): void {
     this.cancel();
     this.policy = null;
     this.previousMotion = null;
     this.failures = 0;
-    this.onChange();
+    if (notify) this.onChange();
   }
   restart(options: Options = {}): void {
     const session = new Session(options);

@@ -13,8 +13,9 @@ import {
   trackPosition,
 } from './rules';
 import type { City, ServiceEvent, Shape, State, Station } from './types';
-import { queueCueBounds, warningCueBounds, type OverlayPlacement } from './overlay-layout';
-import { deriveTrackLayout } from './track-layout';
+import { queueCueBounds, type OverlayPlacement } from './overlay-layout';
+import { deriveTrackLayout, type TrackLayout } from './track-layout';
+import { crowdFillFraction, groupJitter, passengerJitter } from './visual-crowd';
 
 /** Share the renderer's offset/miter geometry with pointer hit testing. */
 function laneVertices(
@@ -59,10 +60,11 @@ function laneVertices(
 export function hitTestVisibleLane(
   state: State, lineId: number, pointer: { x: number; y: number },
   project: (x: number, y: number, height: number) => { x: number; y: number }, radius = 12,
+  paintedLayout?: Readonly<TrackLayout> | null,
 ): number | null {
   const line = state.lines.find((item) => item.id === lineId);
   if (!line) return null;
-  const layout = deriveTrackLayout(state);
+  const layout = paintedLayout ?? deriveTrackLayout(state);
   let best = radius, result: number | null = null;
   for (const [index, [a, b]] of segments(line).entries()) {
     const edge = layout.segments.find((item) => item.from === Math.min(a, b) && item.to === Math.max(a, b));
@@ -196,6 +198,62 @@ function stationSlab(
   slab.rotation.x = -Math.PI / 2;
   return slab;
 }
+/** Clip the actual roof silhouette's triangles against a horizontal fill line. */
+function crowdRoof(shape: Shape, fraction: number): THREE.BufferGeometry {
+  const outline = new THREE.ShapeGeometry(stationOutline(shape, 0.5), 8);
+  outline.computeBoundingBox();
+  const bottom = outline.boundingBox!.min.y, top = outline.boundingBox!.max.y;
+  const limit = bottom + (top - bottom) * fraction;
+  const pos = outline.getAttribute('position');
+  const indices = outline.index;
+  const result: number[] = [];
+  const point = (i: number) => [pos.getX(i), pos.getY(i)];
+  const inside = (v: number[]) => v[1] <= limit + 1e-7;
+  const intersect = (a: number[], b: number[]) => {
+    const t = (limit - a[1]) / (b[1] - a[1]);
+    return [a[0] + (b[0] - a[0]) * t, limit];
+  };
+  const count = indices ? indices.count : pos.count;
+  for (let i = 0; i < count; i += 3) {
+    let polygon = [point(indices ? indices.getX(i) : i),
+      point(indices ? indices.getX(i + 1) : i + 1),
+      point(indices ? indices.getX(i + 2) : i + 2)];
+    const clipped: number[][] = [];
+    for (let n = 0; n < polygon.length; n++) {
+      const a = polygon[n], b = polygon[(n + 1) % polygon.length];
+      if (inside(a)) clipped.push(a);
+      if (inside(a) !== inside(b)) clipped.push(intersect(a, b));
+    }
+    polygon = clipped;
+    for (let n = 1; n + 1 < polygon.length; n++)
+      for (const vertex of [polygon[0], polygon[n], polygon[n + 1]]) result.push(vertex[0], vertex[1], 0);
+  }
+  outline.dispose();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(result, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+function updateStationCrowd(group: THREE.Group, shape: Shape, fraction: number): void {
+  const existing = group.getObjectByName('crowd-fill') as THREE.Mesh | undefined;
+  if (!fraction) {
+    if (existing) { group.remove(existing); existing.geometry.dispose(); (existing.material as THREE.Material).dispose(); }
+    return;
+  }
+  if (existing?.userData.fraction === fraction) return;
+  if (existing) { group.remove(existing); existing.geometry.dispose(); (existing.material as THREE.Material).dispose(); }
+  const fill = new THREE.Mesh(crowdRoof(shape, fraction), new THREE.MeshBasicMaterial({
+    color: '#df313c', transparent: true, opacity: 0.56, side: THREE.DoubleSide,
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+  }));
+  fill.name = 'crowd-fill';
+  fill.rotation.x = -Math.PI / 2;
+  // Top roof ends at 0.69; the sign's bottom is 0.75. Keep the fill in this
+  // six-hundredth-high gap so it never paints over the center destination sign.
+  fill.position.y = 0.751;
+  fill.userData.fraction = fraction;
+  group.add(fill);
+}
 function makeStation(p: Station): THREE.Group {
   const g = new THREE.Group();
   const palettes: Record<Shape, [string, string]> = {
@@ -313,17 +371,15 @@ export class MetroRenderer {
   private sceneCues = new THREE.Scene();
   private cueCamera = new THREE.OrthographicCamera(0, 1, 0, 1, -10, 10);
   private cueEntries = new Map<string, CueEntry>();
-  private cueBounds: { id: number; kind: 'queue' | 'warning'; x: number; y: number; width: number; height: number }[] = [];
+  private cueBounds: { id: number; kind: 'queue'; x: number; y: number; width: number; height: number }[] = [];
   private cueShapes = new Map<Shape, { geometry: THREE.ShapeGeometry; material: THREE.MeshBasicMaterial }>();
   private cueLabelGeometry = new THREE.PlaneGeometry(1, 1);
-  private warningGeometry = new THREE.BufferGeometry();
-  private warningRingGeometry = new THREE.RingGeometry(12, 14, 36);
-  private warningBarGeometry = new THREE.PlaneGeometry(1.6, 5.5);
-  private warningDotGeometry = new THREE.PlaneGeometry(1.6, 1.6);
-  private warningMaterial = new THREE.MeshBasicMaterial({ color: '#dc7136', side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false });
-  private warningInk = new THREE.MeshBasicMaterial({ color: '#392538', side: THREE.DoubleSide, depthTest: false, depthWrite: false, toneMapped: false });
+
   private loadSnapshot: LoadSnapshot | null = null;
   private city: City | null = null;
+  private riverTransform: ((x:number,y:number)=>{x:number;y:number}) | null = null;
+  private trackSource: State | null = null;
+  private trackWarpRows: number[] = [];
   private routeKey = '';
   private trackLayout: ReturnType<typeof deriveTrackLayout> | null = null;
   private observer: ResizeObserver;
@@ -448,13 +504,12 @@ export class MetroRenderer {
     icon.userData.shape = shape;
     return icon;
   }
-  /** Draw the placed in-scene geometry after render(); ring stays on its station. */
+  /** Draw the placed queue marks; crowd lives inside the station model. */
   updateSceneCues(s: Readonly<State>, placements: readonly OverlayPlacement[]): void {
-    this.cueBounds = placements.flatMap(({ id, queue, warning }) => [
-      ...(queue ? [{ id, kind: 'queue' as const, ...queue }] : []),
-      ...(warning ? [{ id, kind: 'warning' as const, ...warning }] : []),
-    ]);
+    this.cueBounds = placements.flatMap(({ id, queue }) =>
+      queue ? [{ id, kind: 'queue' as const, ...queue }] : []);
     const byId = new Map(placements.map((item) => [item.id, item]));
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     const live = new Set<string>();
     const place = (key: string, x: number, y: number, signature: string,
       build: (entry: CueEntry) => void) => {
@@ -475,13 +530,12 @@ export class MetroRenderer {
     };
     for (const p of s.stations) {
       const layout = byId.get(p.id);
-      const anchor = this.project(p.x, p.y, 0.6);
       if (layout?.queue && p.queue.length) {
         const level = layout.queue.level ?? 'full';
         const mobile = this.bounds.width <= 650;
         const local = queueCueBounds(p.queue.length, level, mobile,
-          mobile ? undefined : new Set(p.queue.map((passenger) => passenger.shape)).size);
-        const individual = mobile || p.queue.length <= 10;
+          new Set(p.queue.map((passenger) => passenger.shape)).size);
+        const individual = p.queue.length <= 10;
         const passengers = individual ? p.queue : [];
         const groups = individual ? [] : SHAPES.map((shape) => ({
           shape, count: p.queue.filter((passenger) => passenger.shape === shape).length,
@@ -504,53 +558,36 @@ export class MetroRenderer {
             groups.forEach(({ shape, count }, index) => {
               const columns = Math.min(groups.length, 4);
               const row = Math.floor(index / 4);
-              const icon = this.cueShape(shape, -columns * 50 / 2 + (index % 4) * 50 + 6);
-              icon.position.y = row * 20;
-              entry.group.add(icon);
+              const mark = new THREE.Group();
+              mark.name = `queue-group-${shape}`;
+              mark.position.set(-columns * 50 / 2 + (index % 4) * 50 + 6, row * 20, 0);
+              const icon = this.cueShape(shape, 0);
+              mark.add(icon);
               const label = cueText(`×${count}`, '#283248', this.cueLabelGeometry);
-              label.position.set(icon.position.x + 5 + label.scale.x / 2, row * 20, 1);
+              label.position.set(5 + label.scale.x / 2, 0, 1);
               label.renderOrder = 3;
-              entry.group.add(label);
+              mark.add(label);
+              entry.group.add(mark);
               entry.labels.push(label);
             });
           });
-      }
-      if (p.crowd > 0) {
-        const seconds = Math.ceil((RULES.crowdTicks - p.crowd) / RULES.hz);
-        const compact = this.bounds.width <= 650 || !layout?.warning;
-        place(`warning-${p.id}`, anchor.x, anchor.y,
-          this.bounds.width <= 650 ? 'ring-only' : `${seconds}:${compact}`, (entry) => {
-            const ring = new THREE.Mesh(this.warningRingGeometry, this.warningMaterial);
-            ring.name = 'warning-ring';
-            ring.position.z = 0.5;
-            entry.group.add(ring);
-            if (compact) return;
-            const detail = new THREE.Group();
-            detail.name = 'warning-detail';
-            entry.group.add(detail);
-            if (!this.warningGeometry.getAttribute('position')) {
-              this.warningGeometry.setAttribute('position', new THREE.Float32BufferAttribute(
-                [12, -12, 0, 19, -25, 0, 26, -12, 0], 3));
-            }
-            const triangle = new THREE.Mesh(this.warningGeometry, this.warningMaterial);
-            triangle.name = 'warning-symbol';
-            detail.add(triangle);
-            const bar = new THREE.Mesh(this.warningBarGeometry, this.warningInk);
-            bar.position.set(19, -17.8, 0.1);
-            detail.add(bar);
-            const dot = new THREE.Mesh(this.warningDotGeometry, this.warningInk);
-            dot.position.set(19, -14, 0.1);
-            detail.add(dot);
-            const label = cueText(`${seconds}s`, '#ad3e2a', this.cueLabelGeometry);
-            label.position.set(19, -32, 1);
-            label.renderOrder = 3;
-            detail.add(label);
-            entry.labels.push(label);
-          });
-        if (layout?.warning) {
-          const detail = this.cueEntries.get(`warning-${p.id}`)!.group.getObjectByName('warning-detail')!;
-          detail.position.set(layout.warning.x - anchor.x - warningCueBounds.x,
-            layout.warning.y - anchor.y - warningCueBounds.y, 0);
+        const entry = this.cueEntries.get(`queue-${p.id}`)!;
+        if (individual) {
+          for (const icon of entry.group.children) {
+            const rider = p.queue.find((v) => v.id === icon.userData.passengerId);
+            if (!rider) continue;
+            const index = p.queue.indexOf(rider), row = Math.floor(index / 6);
+            const baseX = -Math.min(6, p.queue.length - row * 6) * 11 / 2 + (index % 6) * 11 + 5.5;
+            const jitter = passengerJitter(rider.id, rider.born, s.tick, reducedMotion);
+            icon.position.set(baseX + jitter.x, row * 12 + jitter.y, 0);
+          }
+        } else for (const mark of entry.group.children) {
+          const shape = mark.name.slice('queue-group-'.length) as Shape;
+          const index = groups.findIndex((group) => group.shape === shape);
+          if (index < 0) continue;
+          const offset = groupJitter(p.queue.filter((rider) => rider.shape === shape), s.tick, reducedMotion);
+          mark.position.set(-Math.min(groups.length, 4) * 50 / 2 + (index % 4) * 50 + 6 + offset.x,
+            Math.floor(index / 4) * 20 + offset.y, 0);
         }
       }
     }
@@ -571,17 +608,60 @@ export class MetroRenderer {
     queueStationIds: number[]; warningStationIds: number[]; ringStationIds: number[];
     bounds: readonly { id: number; kind: 'queue' | 'warning'; x: number; y: number; width: number; height: number }[] } {
     const queueStationIds: number[] = [], warningStationIds: number[] = [], ringStationIds: number[] = [];
-    for (const [key, entry] of this.cueEntries) {
+    for (const key of this.cueEntries.keys()) {
       const id = Number(key.slice(key.indexOf('-') + 1));
       if (key.startsWith('queue-')) queueStationIds.push(id);
-      else if (key.startsWith('warning-')) {
-        ringStationIds.push(id);
-        if (entry.group.getObjectByName('warning-symbol')) warningStationIds.push(id);
-      }
     }
     return { queueCount: queueStationIds.length, warningCount: warningStationIds.length,
       ringCount: ringStationIds.length, queueStationIds, warningStationIds, ringStationIds,
       bounds: this.cueBounds };
+  }
+  /** Visual-only river warp; source vertices remain unchanged for repeated layout updates. */
+  setRiverTransform(transform: ((x:number,y:number)=>{x:number;y:number}) | null):void {
+    this.riverTransform=transform;
+    for(const child of this.environment.children){
+      if(!(child instanceof THREE.Mesh) || !child.userData.riverSource)continue;
+      const original=child.userData.riverSource as Float32Array;
+      const position=child.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for(let i=0;i<position.count;i++){
+        const x=original[i*3], y=original[i*3+2];
+        const target=transform?.(x,y) ?? {x,y};
+        position.setXYZ(i,target.x,original[i*3+1],target.y);
+      }
+      position.needsUpdate=true;
+      child.geometry.computeVertexNormals();
+      child.geometry.computeBoundingSphere();
+    }
+  }
+  /** Canonical rail bends belong to the simulation, not the warped station endpoints. */
+  setTrackSource(source: State | null, warpRows: number[] = []): void {
+    this.trackSource = source;
+    this.trackWarpRows = warpRows;
+  }
+  private warpTrackPoints(points:{x:number;y:number}[]):{x:number;y:number}[] {
+    const transform=this.riverTransform!;
+    const result=[transform(points[0].x,points[0].y)];
+    for(let i=1;i<points.length;i++){
+      const a=points[i-1],b=points[i];
+      const between=this.trackWarpRows.filter(y=>y>Math.min(a.y,b.y) && y<Math.max(a.y,b.y));
+      const ordered=b.y>=a.y?between:between.reverse();
+      for(const y of ordered){
+        const t=(y-a.y)/(b.y-a.y);
+        result.push(transform(a.x+(b.x-a.x)*t,y));
+      }
+      result.push(transform(b.x,b.y));
+    }
+    return result;
+  }
+  private visualTrackLayout(s: State): ReturnType<typeof deriveTrackLayout> {
+    if (!this.trackSource || !this.riverTransform) return deriveTrackLayout(s);
+    const source = deriveTrackLayout(this.trackSource);
+    return {...source, segments: source.segments.map(edge => ({...edge,
+      points: this.warpTrackPoints(edge.points)}))};
+  }
+  /** The last painted rail layout, including warped canonical bends and shared-lane offsets. */
+  getPaintedTrackLayout(): Readonly<TrackLayout> | null {
+    return this.trackLayout;
   }
   private buildEnvironment(city: City): void {
     disposeGroup(this.environment);
@@ -629,12 +709,14 @@ export class MetroRenderer {
           toneMapped: false,
         });
         const water = mesh(geometry, material);
+        water.userData.riverSource = new Float32Array(vertices);
         water.castShadow = false;
         this.environment.add(water);
       };
       makeRibbon(0.97, '#e7f2f5', 0.045);
       makeRibbon(0.89, '#c8e5f0', 0.05);
     }
+    if(this.riverTransform)this.setRiverTransform(this.riverTransform);
   }
   private track(
     a: Station,
@@ -747,15 +829,14 @@ export class MetroRenderer {
   }
   showPreview(s: State, stops: number[], line: number, valid = true): void {
     disposeGroup(this.preview);
-    for (let i = 1; i < stops.length; i++)
-      this.track(
-        station(s, stops[i - 1]),
-        station(s, stops[i]),
-        valid ? LINE_COLORS[line] : '#e75c58',
-        this.preview,
-        0,
-        true,
-      );
+    for (let i = 1; i < stops.length; i++) {
+      const a = station(s, stops[i - 1]), b = station(s, stops[i]);
+      if (this.trackSource && this.riverTransform) {
+        const sourceA = station(this.trackSource, a.id), sourceB = station(this.trackSource, b.id);
+        this.drawLane(this.warpTrackPoints(trackPoints(sourceA, sourceB)),
+          0, 0.105, valid ? LINE_COLORS[line] : '#e75c58', this.preview, 0.43);
+      } else this.track(a, b, valid ? LINE_COLORS[line] : '#e75c58', this.preview, 0, true);
+    }
   }
   clearPreview(): void {
     disposeGroup(this.preview);
@@ -839,6 +920,7 @@ export class MetroRenderer {
       }
       g.position.set(p.x, 0, p.y);
       g.scale.setScalar(p.interchange ? 1.3 : 1);
+      updateStationCrowd(g, p.shape, crowdFillFraction(p.crowd, s.mode));
     }
     const ghost = s.trains.filter(
       (t) =>
@@ -852,7 +934,7 @@ export class MetroRenderer {
     if (key !== this.routeKey) {
       this.routeKey = key;
       disposeGroup(this.tracks);
-      this.trackLayout = deriveTrackLayout(s);
+      this.trackLayout = this.visualTrackLayout(s);
       for (const edge of this.trackLayout.segments) {
         this.drawLane(edge.points, 0, 0.105, '#fffaf6', this.tracks, 0.20);
         for (const lane of edge.lanes)
@@ -932,7 +1014,8 @@ export class MetroRenderer {
     const v = new THREE.Vector3(x, height, y).project(this.camera);
     return { x: ((v.x + 1) / 2) * this.bounds.width, y: ((1 - v.y) / 2) * this.bounds.height };
   }
-  unproject(x: number, y: number): { x: number; y: number } | null {
+  /** Reproject a point onto an arbitrary horizontal plane (ground by default). */
+  unprojectAtHeight(x: number, y: number, height = 0): { x: number; y: number } | null {
     const ndc = new THREE.Vector2(
         (x / this.bounds.width) * 2 - 1,
         1 - (y / this.bounds.height) * 2,
@@ -940,8 +1023,11 @@ export class MetroRenderer {
       ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
     const point = new THREE.Vector3();
-    if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), point)) return null;
+    if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -height), point)) return null;
     return { x: point.x, y: point.z };
+  }
+  unproject(x: number, y: number): { x: number; y: number } | null {
+    return this.unprojectAtHeight(x, y);
   }
   capture(): string {
     return this.canvas.toDataURL('image/png');
@@ -958,12 +1044,7 @@ export class MetroRenderer {
     }
     this.cueShapes.clear();
     this.cueLabelGeometry.dispose();
-    this.warningGeometry.dispose();
-    this.warningRingGeometry.dispose();
-    this.warningBarGeometry.dispose();
-    this.warningDotGeometry.dispose();
-    this.warningMaterial.dispose();
-    this.warningInk.dispose();
+
     this.loadSnapshot = null;
     this.previousTrainAnchors.clear();
     this.trackLayout = null;

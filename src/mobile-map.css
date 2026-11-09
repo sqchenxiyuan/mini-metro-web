@@ -133,7 +133,7 @@
   #mobile-crowd-alert { bottom: 52px; }
   .map-panel:has(#mobile-crowd-alert:not([hidden])) #stage { bottom: 84px; }
   body.map-first .topbar { height: 44px; padding: 0 2px; gap: 0; }
-  body.map-first .score-block { flex: 0 0 48px; margin: 0 auto 0 2px; }
+  body.map-first .score-block { flex: 0 0 84px; margin: 0 auto 0 2px; }
   body.map-first .score-block strong { font-size: 19px; }
   body.map-first .header-actions { gap: 0; }
   body.map-first .header-actions .text-button { min-width: 44px; min-height: 44px; padding: 0; }

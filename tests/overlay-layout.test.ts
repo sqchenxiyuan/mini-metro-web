@@ -20,7 +20,7 @@ describe('anchored WebGL cue placement', () => {
     const stations = [{ id: 1, x: 170, y: 170, queue: 12, crowd: 0, selected: false },
       { id: 2, x: 250, y: 170, queue: 8, crowd: 0, selected: false }];
     const initial = layoutSceneCues(stations, { width: 390, height: 708 });
-    expect(initial[0].queue).toMatchObject({ level: 'full', width: 66, height: 22 });
+    expect(initial[0].queue).toMatchObject({ level: 'full', width: 204, height: 61 });
     expect(initial[0].queue!.x + initial[0].queue!.width / 2).toBe(170);
     expect(initial[0].queue!.y).toBeGreaterThan(209);
     expect(initial[0].warning).toBeNull();

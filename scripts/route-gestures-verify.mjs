@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
+import { createServer } from 'vite';
 import { browserLaunchOptions } from './browser-launch.mjs';
+const server = process.env.METRO_TEST_URL ? null : await createServer({server:{host:'127.0.0.1',port:0,hmr:false},logLevel:'error'});
+await server?.listen();
 const browser = await chromium.launch(browserLaunchOptions({ ...process.env, METRO_BROWSER_EXECUTABLE_PATH: process.env.METRO_BROWSER_EXECUTABLE_PATH ?? '/opt/hermes/tools/chromium-1208/chrome-linux64/chrome' }));
-const url = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:5175/';
+const url = process.env.METRO_TEST_URL ?? server.resolvedUrls.local[0];
 async function drag(page, a, b, touch = false) {
   if (!touch) { await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x,b.y,{steps:14}); await page.mouse.up(); return; }
   const cdp = await page.context().newCDPSession(page);
   const send = (type,x,y) => cdp.send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'?[]:[{id:1,x,y,radiusX:4,radiusY:4,force:1}]});
   await send('touchStart',a.x,a.y);
   for (let i=1;i<=14;i++) await send('touchMove',a.x+(b.x-a.x)*i/14,a.y+(b.y-a.y)*i/14);
+  if (await page.evaluate(()=>Boolean(window.__lastRouteTouchMove))) await page.waitForFunction(({x,y})=>
+    window.__lastRouteTouchMove && Math.hypot(window.__lastRouteTouchMove.x-x,window.__lastRouteTouchMove.y-y)<.1,b);
   await send('touchEnd',b.x,b.y); await cdp.detach();
 }
 const state = page => page.evaluate(() => window.metro.getState());
@@ -46,31 +51,72 @@ async function railPoint(page, edge) {
 }
 async function mobileRailPoint(page,edge) {
  return page.evaluate(async edge=>{
-  const {MobileMapRenderer}=await import('/src/mobile-map.ts');
-  const renderer=Object.create(MobileMapRenderer.prototype);
-  const s=window.metro.getState(), stats=window.metro.mobileMapStats(),stage=document.querySelector('#stage').getBoundingClientRect();
-  Object.assign(renderer,{state:s,points:[],center:stats.center,zoom:stats.zoom,size:{width:stage.width,height:stage.height},
-   routeCache:new Map(),recentLineKey:'',recentLineLayout:null,layoutKey:'',
-   sourceYs:[...new Set(s.stations.map(p=>p.y))].sort((a,b)=>a-b),warpValues:[]});
-  const {geographicLayout}=await import('/src/mobile-map.ts');
-  renderer.points=geographicLayout(s.stations);
-  renderer.warpValues=renderer.sourceYs.map(y=>renderer.points.find(p=>p.sourceY===y)?.y??y*70);
-  const a=s.stations[edge===3?2:edge-1],b=s.stations[edge===3?0:edge];
-  const p=window.metro.projectStation(a.id),q=window.metro.projectStation(b.id);
-  const mid={x:(p.x+q.x)/2,y:(p.y+q.y)/2};
-  for(let radius=0;radius<90;radius+=4)for(let x=-radius;x<=radius;x+=4)for(let y=-radius;y<=radius;y+=4){
-   const point={x:mid.x+x,y:mid.y+y};
-   if(point.x<stage.left+28||point.x>stage.right-28||point.y<stage.top+28||point.y>stage.bottom-28)continue;
-   if(renderer.hitTestLane(s,0,{x:point.x-stage.left,y:point.y-stage.top},4)===edge)return point;
-  }
-  throw new Error(`mobile rail edge ${edge} not visible`);
+  const {hitTestVisibleLane}=await import('/src/renderer.ts');
+  const scene=window.__paintedScene, s=window.metro.getState();
+  const stage=document.querySelector('#stage').getBoundingClientRect();
+  const layout=scene?.getPaintedTrackLayout();
+  if(!layout)throw new Error('mobile 3D painted track layout unavailable');
+  const stops=s.lines[0].stops;
+  const a=stops[edge-1],b=stops[edge%stops.length];
+  const track=layout.segments.find(item=>item.from===Math.min(a,b)&&item.to===Math.max(a,b));
+  const lane=track?.lanes.find(item=>item.lineId===0);
+  if(!lane)throw new Error(`mobile 3D painted rail edge ${edge} absent`);
+  const vertices=scene.trackVertices(track.points,lane.offset,.43,
+    track.laneEndpoints?.find(item=>item.lineId===0)??track.endpointOffsets);
+  const path=scene.laneCurve(vertices);
+  const blocked=[...document.querySelectorAll('[data-train-id], [data-train-group]')]
+    .map(node=>node.getBoundingClientRect());
+  const candidates=Array.from({length:61},(_,i)=>{
+    const p=path.getPoint((i+2)/64),v=scene.project(p.x,p.z,p.y);
+    const point={x:v.x+stage.left,y:v.y+stage.top};
+    const nearest=Math.min(...s.stations.map(st=>{
+      const q=window.metro.projectStation(st.id);return Math.hypot(point.x-q.x,point.y-q.y);
+    }));
+    const inset=Math.min(point.x-stage.left,stage.right-point.x,point.y-stage.top,stage.bottom-point.y);
+    const hit=hitTestVisibleLane(s,0,v,scene.project.bind(scene),4,layout);
+    return {point,nearest,inset,hit};
+  }).filter(c=>c.hit===edge&&c.nearest>31&&c.inset>28&&
+    document.elementFromPoint(c.point.x,c.point.y)?.closest('#stage') &&
+    !blocked.some(r=>c.point.x>=r.left-4&&c.point.x<=r.right+4&&c.point.y>=r.top-4&&c.point.y<=r.bottom+4));
+  const picked=candidates.sort((x,y)=>y.nearest-x.nearest)[0];
+  if(!picked)throw new Error(`mobile 3D rail edge ${edge} has no safe painted touch point outside train badges`);
+  return picked.point;
  },edge);
+}
+async function mobileBlankPoint(page,start) {
+ return page.evaluate(async start=>{
+  const {hitTestVisibleLane}=await import('/src/renderer.ts');
+  const scene=window.__paintedScene,s=window.metro.getState();
+  const stage=document.querySelector('#stage').getBoundingClientRect(),layout=scene?.getPaintedTrackLayout();
+  if(!layout)throw new Error('mobile 3D painted track layout unavailable for blank release');
+  const passengers=window.metro.mobileMapStats().visiblePositions;
+  const options=[];
+  for(let x=stage.left+30;x<stage.right-30;x+=15)for(let y=stage.top+30;y<stage.bottom-30;y+=15){
+   if(Math.hypot(x-start.x,y-start.y)<90)continue;
+   if(!document.elementFromPoint(x,y)?.closest('#stage'))continue;
+   if(s.stations.some(st=>{const p=window.metro.projectStation(st.id);return Math.hypot(x-p.x,y-p.y)<48;}))continue;
+   if(passengers.some(p=>Math.hypot(x-stage.left-p.x,y-stage.top-p.y)<18))continue;
+   if(hitTestVisibleLane(s,0,{x:x-stage.left,y:y-stage.top},scene.project.bind(scene),24,layout)!==null)continue;
+   options.push({x,y});
+  }
+  if(!options.length)throw new Error('no safe blank mobile loop release');
+  const wanted={x:stage.left+stage.width*.8,y:stage.top+stage.height*.78};
+  return options.sort((a,b)=>Math.hypot(a.x-wanted.x,a.y-wanted.y)-Math.hypot(b.x-wanted.x,b.y-wanted.y))[0];
+ },start);
 }
 try {
  for (const [width,height,touch] of [[1280,800,false],[1280,800,true],[390,844,true]]) {
   const page = await browser.newPage({viewport:{width,height},hasTouch:touch,isMobile:touch});
   const errors=[]; page.on('pageerror',e=>errors.push(String(e)));
   await page.goto(url,{waitUntil:'networkidle'}); await page.waitForFunction(()=>window.metro);
+  if (touch && width < 650) await page.evaluate(async () => {
+    const { MetroRenderer } = await import('/src/renderer.ts');
+    const original = MetroRenderer.prototype.drawLane;
+    MetroRenderer.prototype.drawLane = function (...args) { window.__paintedScene = this; return original.apply(this, args); };
+    document.querySelector('#stage').addEventListener('pointermove',e=>{
+      window.__lastRouteTouchMove={x:e.clientX,y:e.clientY};
+    });
+  });
   await reset(page);
   if (touch && width < 650) {
     for(let i=0;i<6;i++) await page.locator('#zoom-out').click();
@@ -142,7 +188,8 @@ try {
   assert.equal((await route(page,0,[1,2,3],true)).ok,true);
   const original=await state(page);
   const s=await page.locator('#stage').boundingBox();
-  const edge=touch&&width<650?await mobileRailPoint(page,3):center(a,c), blank={x:s.x+s.width*.8,y:s.y+s.height*.78};
+  const edge=touch&&width<650?await mobileRailPoint(page,3):center(a,c);
+  const blank=touch&&width<650?await mobileBlankPoint(page,edge):{x:s.x+s.width*.8,y:s.y+s.height*.78};
   await drag(page,edge,blank,touch);
   assert.equal((await state(page)).lines[0].loop,false,`${width} loop release removes closing edge`);
   assert.deepEqual((await state(page)).lines[0].stops,[1,2,3],`${width} closure keeps stop order`);
@@ -157,14 +204,13 @@ try {
   const before=await state(page); await drag(page,center(a,c),{x:center(a,c).x+18,y:center(a,c).y+14},touch);
   assert.deepEqual((await state(page)).lines[0],before.lines[0],`${width} short pull cancels`);
   if (touch && width < 650) {
-    const mobileStage=await page.locator('#stage').boundingBox();
     for (const [edgeIndex,expected] of [[1,[2,3,1]],[2,[3,1,2]]]) {
       await reset(page); [a,b,c]=await ids(page);
-      for(let i=0;i<3;i++) await page.locator('#zoom-out').click();
+      for(let i=0;i<3;i++) await page.locator('#zoom-in').click();
       await drag(page,{x:370,y:580},{x:280,y:580},touch);
       assert.equal((await route(page,0,[1,2,3],true)).ok,true);
       const start=await mobileRailPoint(page,edgeIndex);
-      await drag(page,start,{x:mobileStage.x+mobileStage.width*.83,y:mobileStage.y+mobileStage.height*.79},touch);
+      await drag(page,start,await mobileBlankPoint(page,start),touch);
       assert.deepEqual((await state(page)).lines[0],{id:0,stops:expected,loop:false},`mobile edge ${edgeIndex} rotates`);
     }
   }
@@ -192,4 +238,4 @@ try {
   console.log(`${width}x${height}: ${touch?'touch':'mouse'} body, both handles, loop, short cancel passed`);
   await page.close();
  }
-} finally {await browser.close();}
+} finally {await browser.close();await server?.close();}

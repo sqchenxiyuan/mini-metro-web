@@ -66,6 +66,7 @@ try {
    const start=await page.getByRole('button',{name:/3号线终点.*延长/}).boundingBox();
    const goal=await page.locator('[data-station="3"]').boundingBox();
    assert.ok(start&&goal,'third line end and destination are both visible for native touch');
+   assert.equal(await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.classList.contains('endpoint-handle'),{x:start.x+start.width/2,y:start.y+start.height/2}),true,'third line end must be a native draggable stage handle, not a keyboard-only fallback');
    const a={x:start.x+start.width/2,y:start.y+start.height/2},b={x:goal.x+goal.width/2,y:goal.y+goal.height/2};
    const cdp=await page.context().newCDPSession(page);
    const touch=(type,x,y)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'?[]:[{id:1,x,y,radiusX:4,radiusY:4,force:1}]});
@@ -74,6 +75,7 @@ try {
    await touch('touchEnd',b.x,b.y);
    const state=await page.evaluate(()=>window.metro.getState());
    assert.deepEqual(state.lines.slice(0,3).map(l=>l.stops),[[1,2],[1,3],[2,1,3]],'real touch extends exact third line, not overlapping first line');
+   await page.screenshot({path:'/opt/data/cache/scratch/metro-acceptance/568x320-third-line-touch.png'});
    console.log('native touch exact line identity passed');
    await page.evaluate(()=>{const stage=document.querySelector('#stage');stage.style.width='40px';stage.style.height='40px';});
    await page.locator('#zoom-in').click();
