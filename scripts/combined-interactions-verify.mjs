@@ -31,7 +31,7 @@ try {
     const stations=[...document.querySelectorAll('[data-station]')].filter(e=>!e.hidden&&e.getClientRects().length).map(e=>({id:e.dataset.station,rect:rect(e)}));
     const queues=window.metro.sceneCues().bounds.filter(b=>b.kind==='queue').map(b=>({id:b.id,rect:{x:stage.x+b.x,y:stage.y+b.y,width:b.width,height:b.height}}));
     const trains=[...document.querySelectorAll('[data-train-id],[data-train-group]')].filter(e=>!e.hidden&&e.getClientRects().length).map(e=>({id:e.dataset.trainId||e.dataset.trainGroup,rect:rect(e)}));
-    const controls=['#context-actions','#mobile-crowd-alert','#map-overview','#queue-browser-toggle'].map(s=>document.querySelector(s)).filter(e=>e&&!e.hidden&&e.getClientRects().length).map(e=>({name:e.id,rect:rect(e)}));
+    const controls=['#context-actions','#mobile-crowd-alert','#queue-browser-toggle'].map(s=>document.querySelector(s)).filter(e=>e&&!e.hidden&&e.getClientRects().length).map(e=>({name:e.id,rect:rect(e)}));
     const fallback=[...document.querySelectorAll('[role="group"][aria-label*="地图空间不足"] button')].map(e=>e.getAttribute('aria-label'));
     const lines=window.metro.getState().lines;
     const owners=handles.map(h=>{const m=h.name.match(/^(\d+)号线(起点|终点)/),line=lines[Number(m?.[1])-1],id=m?.[2]==='起点'?line?.stops[0]:line?.stops.at(-1),p=window.metro.projectStation(id);return {name:h.name,distance:Math.hypot(p.x-(h.rect.x+h.rect.width/2),p.y-(h.rect.y+h.rect.height/2))}});

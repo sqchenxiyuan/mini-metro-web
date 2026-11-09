@@ -988,9 +988,20 @@ input, select { accent-color: #a383bd; }
   .resources small { font-size: 10px; }
   .day-progress { gap: 3px; }
   .footer-right .icon-button { width: 44px; height: 44px; }
-  .map-tools button { min-width: 44px; min-height: 44px; }
+  /* mobile-map.css is imported last; keep all four rail controls finger-sized. */
+  .map-panel .map-tools button { min-width: 44px; min-height: 44px; }
   .line-detail { max-width: calc(100vw - 16px); }
   .right-panel { max-width: calc(100vw - 16px); right: 8px; }
+  /* The map's 44px control rail stays operable when the inspector opens. */
+  #inspector:not([hidden]) { top: 44px; }
+  .right-panel .tabs #inspector-close {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
   .map-hint {
     white-space: normal;
     text-align: center;
@@ -999,8 +1010,100 @@ input, select { accent-color: #a383bd; }
   }
   .map-hint button { min-height: 44px; }
 }
+/* The default mobile workspace has a 260px floor. A 320px landscape
+   viewport cannot accommodate that floor plus the 56px header and 80px
+   footer; the body clips the whole playback/resources row. */
+@media (max-width: 650px) and (max-height: 600px) {
+  body:not(.map-first) .workspace {
+    height: calc(100dvh - 104px);
+    min-height: 0;
+  }
+  body:not(.map-first) .topbar { height: 56px; }
+  body:not(.map-first) .transport-bar {
+    height: 48px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  body:not(.map-first) .transport-controls { flex: 0 0 auto; }
+  body:not(.map-first) .transport-bar .resources {
+    display: flex;
+    flex: 1 1 auto;
+    justify-content: space-evenly;
+    gap: 3px;
+    min-width: 0;
+  }
+  body:not(.map-first) .resources > div { display: flex; flex-direction: column; align-items: center; }
+  body:not(.map-first) .resources span,
+  body:not(.map-first) .resources small { font-size: 10px; white-space: nowrap; }
+  body:not(.map-first) .day-progress { display: none; }
+  body:not(.map-first) .footer-right { flex: 0 0 auto; }
+  /* The first 44px of the panel is the toolbar; below it is the map. */
+  body:not(.map-first) .map-panel #stage { top: 44px; bottom: 12px; }
+}
+@media (max-width: 440px) and (max-height: 600px) {
+  body:not(.map-first) .workspace { height: calc(100dvh - 148px); }
+  body:not(.map-first) .transport-bar { height: 92px; flex-wrap: wrap; }
+  body:not(.map-first) .transport-controls { order: 0; }
+  body:not(.map-first) .footer-right { order: 1; margin-left: auto; }
+  body:not(.map-first) .transport-bar .resources {
+    order: 2;
+    flex: 1 0 100%;
+    height: 40px;
+    align-items: center;
+  }
+  body:not(.map-first) .resources > div { flex: 1 1 0; min-width: 44px; }
+  body:not(.map-first) .resources span,
+  body:not(.map-first) .resources small { font-size: 9px; }
+  body:not(.map-first) .resources b { font-size: 13px; }
+}
+/* In the short landscape normal view, use the vacant center of the 44px
+   control rail for crowd navigation. Put the full-width station readout in
+   its own row; neither strip covers the canvas. The remaining 128px map can
+   frame the selected station and nearby queue rather than becoming a sliver. */
+@media (min-width: 500px) and (max-width: 650px) and (max-height: 360px) {
+  body:not(.map-first) .map-panel:has(#station-peek:not([hidden])):has(#mobile-crowd-alert:not([hidden])) #stage {
+    top: 100px;
+    bottom: 0;
+  }
+  /* A cue needs its own 44px row after the compact peek. Reserving 16px
+     beyond the no-cue stage keeps it out of the drawable station targets. */
+  body:not(.map-first) .map-panel:has(#station-peek:not([hidden])):has(#mobile-crowd-alert:not([hidden])):has(> .mobile-owner-cue) #stage {
+    top: 116px;
+  }
+  body:not(.map-first) .map-panel:has(#station-peek:not([hidden])):has(#mobile-crowd-alert:not([hidden])) > .mobile-owner-cue {
+    top: 72px;
+  }
+  body:not(.map-first) .map-panel:has(#station-peek:not([hidden])):has(#mobile-crowd-alert:not([hidden])) #station-peek {
+    top: 44px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+    max-height: 52px;
+    margin: 0;
+    padding: 3px 8px;
+  }
+  body:not(.map-first) .map-panel:has(#station-peek:not([hidden])) #mobile-crowd-alert:not([hidden]) {
+    top: 0;
+    bottom: auto !important; /* integration shell normally anchors its alert at the bottom */
+    left: 100px;
+    right: auto;
+    box-sizing: border-box;
+    width: calc(100% - 292px);
+    height: 44px;
+    padding: 3px 8px;
+    border: 1px solid #e3a6a2;
+    border-radius: 5px;
+    font-size: 12px;
+  }
+}
 @media (max-width: 380px) {
-  .city-heading, .score-block div > span, .day-progress { display: none; }
+  .city-heading, .day-progress { display: none; }
+  /* Keep the metric named; the number by itself is ambiguous on narrow phones. */
+  .score-block div > span { display: block; font-size: 10px; white-space: nowrap; }
   .transport-bar { grid-template-columns: 1fr auto; }
   .transport-controls { justify-content: center; }
   .resources { grid-row: 2; }
@@ -1066,7 +1169,6 @@ input, select { accent-color: #a383bd; }
   text-decoration: line-through;
 }
 .map-panel:has(#context-actions:not([hidden])) .map-tools { bottom: 64px; }
-.map-panel:has(#context-actions:not([hidden])) #map-overview { bottom: 60px; }
 
 .endpoint-layer {
   position: absolute;
@@ -1130,7 +1232,6 @@ input, select { accent-color: #a383bd; }
   #context-actions:not([hidden]) { padding-inline: 4px; gap: 4px; }
   #context-actions button { padding-inline: 8px; }
   .map-panel:has(#context-actions:not([hidden])) .map-tools { bottom: auto; }
-  .map-panel:has(#context-actions:not([hidden])) #map-overview { bottom: auto; }
 }
 @media (max-width: 650px) {
   /* Preserve the mobile map's reserved footer/alert area while opening actions. */

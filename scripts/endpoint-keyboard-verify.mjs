@@ -33,7 +33,7 @@ try {
     assert.deepEqual((await page.evaluate(() => window.metro.getState())).lines[0].stops,[1,2], 'Escape leaves authoritative line intact');
     if (width === 390) {
       for (let i = 0; i < 5; i++) await page.locator('#zoom-out').click();
-      await page.locator('#map-overview').focus();
+      await page.locator('#stage').focus();
       for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowRight');
       await page.waitForFunction(() => !document.querySelector('[data-station="3"]').hidden);
       // Pan back until the line's end button and target station are in view together.

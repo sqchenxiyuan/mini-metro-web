@@ -8,7 +8,7 @@ const url = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:5175/';
 const errors = [];
 const geometry = () => {
   const rect = selector => { const r = document.querySelector(selector)?.getBoundingClientRect(); return r ? { x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom } : null; };
-  return { stage:rect('#stage'), alert:rect('#mobile-crowd-alert'), overview:rect('#map-overview'), score:rect('.score-block'), footer:rect('.transport-bar'),
+  return { stage:rect('#stage'), alert:rect('#mobile-crowd-alert'), score:rect('.score-block'), footer:rect('.transport-bar'),
     document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight], viewport:[innerWidth,innerHeight], zoom:window.metro.mobileMapStats().zoom,
     stations:[1,2].map(id=>window.metro.projectStation(id)), controls:['#map-first-toggle','#new-game','#tools-toggle','#replay-toggle','#help','#line-tools-toggle','#play-pause','[data-speed="1"]','[data-speed="2"]','[data-speed="4"]','#zoom-in','#zoom-out','#zoom-reset','#screenshot'].map(sel=>({sel,...rect(sel)})) };
 };
@@ -26,7 +26,7 @@ async function assertPeekClear(page, stationId, source, focused = true) {
     return {peek:rect('#station-peek'),stage,station:window.metro.projectStation(id),target,queues,zoom:stats.zoom,
       painted:stats.visibleDrawnPassengerIds.length,ownerGlyphs:glyphs.filter(g=>ownerIds.has(g.id)).length,
       glyphs,cues,viewport:[innerWidth,innerHeight],document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight],
-      barriers:['.topbar','.left-panel','#line-tools-toggle','#map-overview','#mobile-crowd-alert','.transport-bar'].filter(s => { const e=document.querySelector(s); return e && e.getClientRects().length; }).map(s => ({selector:s,rect:rect(s)}))};
+      barriers:['.topbar','.left-panel','#line-tools-toggle','#mobile-crowd-alert','.transport-bar'].filter(s => { const e=document.querySelector(s); return e && e.getClientRects().length; }).map(s => ({selector:s,rect:rect(s)}))};
   }, stationId);
   const {peek,stage,station,target,queues,glyphs,cues,barriers}=actual;
   assert.ok(peek.width>0 && peek.height>0,`${source}: peek displayed`);
@@ -69,7 +69,7 @@ try {
   assert.ok(opening.stage.height >= 330,`opening stage ${opening.stage.height}`);
   assert.equal(opening.zoom,.55,`opening narrow-phone zoom ${opening.zoom}`);
   assert.ok(opening.stations.every(p=>p.x >= opening.stage.x+20 && p.x <= opening.stage.right-20 && p.y >= opening.stage.y+20 && p.y <= opening.stage.bottom-20),`opening stations ${JSON.stringify(opening.stations)} stage ${JSON.stringify(opening.stage)} viewport ${JSON.stringify(opening.viewport)}`);
-  assert.ok(opening.stations.every(p=>!overlap({x:p.x-22,y:p.y-22,right:p.x+22,bottom:p.y+22},opening.overview)), 'overview cannot cover opening station hit target');
+  assert.equal(await page.locator('#map-overview').count(),0,'no permanent minimap obscures opening station hit targets');
   assert.deepEqual(opening.document,opening.viewport,'no document overflow');
   assert.equal(await page.evaluate(()=>window.metro.hash()),hash,'layout toggle cannot change simulation');
   await page.screenshot({path:`${out}/320x480-opening-map-first.png`});
@@ -100,7 +100,7 @@ try {
   assert.ok(late.stage.height >= 300,`late stage ${late.stage.height}`);
   assert.equal(late.zoom,.55,`late narrow-phone frame zoom ${late.zoom}`);
   assert.equal(await page.locator('#mobile-crowd-alert').isVisible(),true,'crowd alert remains reachable');
-  assert.ok(!overlap(late.alert,late.stage) && !overlap(late.alert,late.score) && !overlap(late.alert,late.overview),'warning is outside map and score/overview');
+  assert.ok(!overlap(late.alert,late.stage) && !overlap(late.alert,late.score),'warning is outside map and score');
   assert.deepEqual(late.document,late.viewport,'no overflow late');
   assert.deepEqual(late.viewport,[320,480],`viewport must remain native; overflow=${JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('body *')].map(e=>({id:e.id,cls:String(e.className).slice(0,45),r:e.getBoundingClientRect()})).filter(v=>v.r.width&&v.r.height&&(v.r.right>321||v.r.bottom>481)).slice(0,20).map(v=>[v.id,v.cls,v.r.x,v.r.y,v.r.width,v.r.height])))}`);
   assert.ok(late.alert.bottom<=480 && late.alert.right<=320,'alert visible within device viewport');
@@ -144,8 +144,8 @@ try {
   assert.equal(await page.evaluate(()=>window.metro.mobileMapStats().zoom),.55,'map-first reset restores narrow-phone frame');
   const hashBeforePan=await page.evaluate(()=>window.metro.hash());
   const panBefore=await page.evaluate(()=>window.metro.mobileMapStats().center);
-  await page.locator('#map-overview').focus();await page.keyboard.press('ArrowDown');
-  assert.notDeepEqual(await page.evaluate(()=>window.metro.mobileMapStats().center),panBefore,'overview keyboard pan');
+  await page.locator('#stage').focus();await page.keyboard.press('ArrowDown');
+  assert.notDeepEqual(await page.evaluate(()=>window.metro.mobileMapStats().center),panBefore,'map keyboard pan');
   assert.equal(await page.evaluate(()=>window.metro.hash()),hashBeforePan,'camera pan and zoom cannot change simulation');
   assert.equal(errors.length,0,`browser errors ${errors}`);
   await page.close();

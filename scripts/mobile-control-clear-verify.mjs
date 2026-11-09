@@ -12,7 +12,7 @@ const intersects = (a,b) => a.x < b.right && b.x < a.right && a.y < b.bottom && 
 async function probe(page, label) {
   const result = await page.evaluate(() => {
     const stage = document.querySelector('#stage').getBoundingClientRect();
-    const selectors = ['#map-overview','.map-tools','#zoom-out','#zoom-reset','#zoom-in','#screenshot','#mobile-crowd-alert','#station-peek','.left-panel','.topbar','.transport-bar'];
+    const selectors = ['.map-tools','#zoom-out','#zoom-reset','#zoom-in','#screenshot','#mobile-crowd-alert','#station-peek','.left-panel','.topbar','.transport-bar'];
     const overlays = selectors.flatMap(selector => {
       const element = document.querySelector(selector);
       if (!element || !element.getClientRects().length || getComputedStyle(element).visibility === 'hidden') return [];
@@ -27,13 +27,13 @@ async function probe(page, label) {
   assert.deepEqual(result.viewport,[320,Number(label.slice(4,7))],`${label}: native viewport`);
 
   if(label.endsWith('-default')) assert.ok(result.visible>0,`${label}: real painted glyphs required`);
-  const mapOverlays = new Set(['#map-overview','.map-tools','#zoom-out','#zoom-reset','#zoom-in','#screenshot','#mobile-crowd-alert','#station-peek','.left-panel','.topbar','.transport-bar']);
+  const mapOverlays = new Set(['.map-tools','#zoom-out','#zoom-reset','#zoom-in','#screenshot','#mobile-crowd-alert','#station-peek','.left-panel','.topbar','.transport-bar']);
   for (const overlay of result.overlays.filter(o=>mapOverlays.has(o.selector))) {
     if (overlay.selector === '.transport-bar') continue;
     assert.ok(!intersects(overlay.rect,result.stage),`${label}: ${overlay.selector} intrudes on drawable stage`);
   }
   assert.equal(result.collisions.length,0,`${label}: opaque overlays hide glyph centers: ${JSON.stringify(result.collisions.slice(0,24))}`);
-  for (const selector of ['#map-overview','.map-tools']) {
+  for (const selector of ['.map-tools']) {
     const overlay=result.overlays.find(o=>o.selector===selector);
     assert.ok(overlay && !intersects(overlay.rect,result.stage),`${label}: ${selector} must be reserved outside the drawable map`);
   }
@@ -49,7 +49,7 @@ try {
     await page.waitForTimeout(150);
     results.push(await probe(page,`320x${height}-default`));
     const hit = await page.evaluate(() => {
-      const elements = ['#map-overview','#zoom-out','#zoom-reset','#zoom-in','#screenshot'].map(selector=>{
+      const elements = ['#zoom-out','#zoom-reset','#zoom-in','#screenshot'].map(selector=>{
         const r=document.querySelector(selector).getBoundingClientRect();
         return {selector,top:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.id};
       });
@@ -57,8 +57,8 @@ try {
     });
     for (const {selector,top} of hit) assert.equal(top,selector.slice(1),`${height}: ${selector} center hit target, not a sibling`);
     const centerBefore = await page.evaluate(()=>window.metro.mobileMapStats().center);
-    await page.locator('#map-overview').click({position:{x:14,y:20}});
-    assert.notDeepEqual(await page.evaluate(()=>window.metro.mobileMapStats().center),centerBefore,`${height}: overview tap pans, not intercepted by adjacent controls`);
+    await page.locator('#stage').focus(); await page.keyboard.press('ArrowRight');
+    assert.notDeepEqual(await page.evaluate(()=>window.metro.mobileMapStats().center),centerBefore,`${height}: map keyboard pans without adjacent controls`);
     const mostCrowded=await page.evaluate(()=>window.metro.getState().stations.filter(s=>s.crowd>0).sort((a,b)=>b.crowd-a.crowd||a.id-b.id)[0].id);
     await page.locator('#mobile-crowd-alert').click();
     const focused=await page.evaluate(id=>{

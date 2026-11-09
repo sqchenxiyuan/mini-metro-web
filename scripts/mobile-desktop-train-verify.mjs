@@ -23,7 +23,7 @@ try {
   const group = page.locator('[data-train-group="1"]');
   await group.waitFor();
   assert.equal(await group.evaluate(node => node.hidden), false, 'group starts unhidden on mobile');
-  const overview = page.locator('#map-overview');
+  const map = page.locator('#stage');
   const initialGroup = await page.evaluate(() => ({
     x: Number.parseFloat(document.querySelector('[data-train-group="1"]').style.left),
     station: window.metro.projectStation(1).x,
@@ -41,9 +41,11 @@ try {
     return window.metro.submit({ action: { type: 'route', line: 0, stops: [1, 2] } }, 'test-fixture');
   });
   assert.ok(edgeSetup.ok, `edge train setup: ${JSON.stringify(edgeSetup)}`);
-  await lonePage.locator('#map-overview').focus();
-  for (let i = 0; i < 4; i++) await lonePage.keyboard.press('ArrowLeft');
-  const rightEdge = await lonePage.evaluate(() => {
+  await lonePage.locator('#stage').focus();
+  let rightEdge;
+  for (let i = 0; i < 12; i++) {
+    await lonePage.keyboard.press('ArrowLeft');
+    rightEdge = await lonePage.evaluate(() => {
     const stage = document.querySelector('#stage').getBoundingClientRect();
     const badge = document.querySelector('[data-train-id]');
     const hidden = badge.hidden;
@@ -53,6 +55,8 @@ try {
     return { station: window.metro.projectStation(1).x, stage: stage.toJSON(),
       badge: rect.toJSON(), hidden };
   });
+    if (rightEdge.hidden && rightEdge.badge.left >= rightEdge.stage.right) break;
+  }
   assert.ok(rightEdge.station < rightEdge.stage.right + 22 && rightEdge.badge.left >= rightEdge.stage.right,
     `parked badge box, not station point, exits right: ${JSON.stringify(rightEdge)}`);
   assert.equal(rightEdge.hidden, true, 'camera pan immediately hides fully offstage parked hit box');
@@ -64,9 +68,11 @@ try {
   assert.ok(edgeUpdate.result.ok, `edge carriage: ${JSON.stringify(edgeUpdate)}`);
   assert.equal(edgeUpdate.hidden, true, 'state update cannot restore offstage parked hit box');
   // Vertical clipping must use the parked badge's -42px offset as well.
-  for (let i = 0; i < 4; i++) await lonePage.keyboard.press('ArrowRight');
-  for (let i = 0; i < 5; i++) await lonePage.keyboard.press('ArrowDown');
-  const topEdge = await lonePage.evaluate(() => {
+  for (let i = 0; i < 12; i++) await lonePage.keyboard.press('ArrowRight');
+  let topEdge;
+  for (let i = 0; i < 14; i++) {
+    await lonePage.keyboard.press('ArrowDown');
+    topEdge = await lonePage.evaluate(() => {
     const stage = document.querySelector('#stage').getBoundingClientRect();
     const badge = document.querySelector('[data-train-id]');
     const hidden = badge.hidden;
@@ -75,10 +81,12 @@ try {
     badge.hidden = hidden;
     return { stage: stage.toJSON(), badge: rect.toJSON(), hidden };
   });
+    if (topEdge.hidden && topEdge.badge.bottom <= topEdge.stage.top) break;
+  }
   assert.ok(topEdge.badge.bottom <= topEdge.stage.top,
     `parked badge box is wholly beyond stage top: ${JSON.stringify(topEdge)}`);
   assert.equal(topEdge.hidden, true, 'vertical camera pan hides parked hit box');
-  for (let i = 0; i < 5; i++) await lonePage.keyboard.press('ArrowUp');
+  for (let i = 0; i < 14; i++) await lonePage.keyboard.press('ArrowUp');
   assert.equal(await lonePage.locator('[data-train-id]').evaluate(node => node.hidden), false,
     'parked badge returns when its box re-enters the stage');
   // A moving train has no parked offset, but its actual box follows the same rule.
@@ -89,8 +97,10 @@ try {
   });
   assert.notEqual(moving.to, null, `fixture train moves: ${JSON.stringify(moving)}`);
   assert.equal(moving.hidden, false, 'moving train begins onstage');
-  for (let i = 0; i < 9; i++) await lonePage.keyboard.press('ArrowLeft');
-  const movingEdge = await lonePage.evaluate(() => {
+  let movingEdge;
+  for (let i = 0; i < 18; i++) {
+    await lonePage.keyboard.press('ArrowLeft');
+    movingEdge = await lonePage.evaluate(() => {
     const stage = document.querySelector('#stage').getBoundingClientRect();
     const badge = document.querySelector('[data-train-id]');
     const hidden = badge.hidden;
@@ -99,24 +109,27 @@ try {
     badge.hidden = hidden;
     return { stage: stage.toJSON(), badge: rect.toJSON(), hidden };
   });
+    if (movingEdge.hidden && movingEdge.badge.left >= movingEdge.stage.right) break;
+  }
   assert.ok(movingEdge.badge.left >= movingEdge.stage.right,
     `moving badge is wholly beyond stage right: ${JSON.stringify(movingEdge)}`);
   assert.equal(movingEdge.hidden, true, 'camera pan hides fully offstage moving hit box');
   await lonePage.close();
-  await overview.focus();
+  await map.focus();
   await page.keyboard.press('ArrowRight'); // camera-only move, no simulation tick
   const afterArrow = await page.evaluate(() => ({
     x: Number.parseFloat(document.querySelector('[data-train-group="1"]').style.left),
     station: window.metro.projectStation(1).x,
     hash: window.metro.hash(),
   }));
-  assert.ok(Math.abs(afterArrow.x - afterArrow.station) <= 1, 'keyboard pan reprojects group with its station without a state tick');
+  assert.ok(Math.abs(afterArrow.x - afterArrow.station) <= 1.01, 'keyboard pan reprojects group with its station without a state tick');
   assert.ok(afterArrow.x < initialGroup.x, 'keyboard pan shifts the group left');
-  await page.keyboard.press('ArrowRight');
+  for (let i = 0; i < 12 && !(await group.evaluate(node => node.hidden)); i++)
+    await page.keyboard.press('ArrowRight');
   assert.equal(await group.evaluate(node => node.hidden), true, 'camera-only pan offscreen hides grouped badge');
-  await page.keyboard.press('ArrowLeft');
-  await page.keyboard.press('ArrowLeft');
-  assert.equal(await group.evaluate(node => node.hidden), false, 'camera-only pan back restores grouped badge');
+  await page.locator('#zoom-reset').click();
+  await map.focus();
+  assert.equal(await group.evaluate(node => node.hidden), false, 'camera reset restores grouped badge');
   assert.equal(await page.evaluate(() => window.metro.hash()), afterArrow.hash, 'camera-only moves do not tick the simulation');
   await group.click();
   assert.equal(await page.locator('#train-detail').isVisible(), true, 'reprojected group remains clickable');
@@ -130,13 +143,12 @@ try {
     station: window.metro.projectStation(1).x,
   }));
   assert.ok(Math.abs(zoomed.x - zoomed.station) <= 1, 'wheel zoom reprojects parked group without a tick');
-  await overview.click({ position: { x: 10, y: 10 } });
-  await page.waitForTimeout(120); // overview's camera reprojection settles on the next frame
+  await page.locator('#zoom-reset').click();
   const recentered = await page.evaluate(() => ({
     x: Number.parseFloat(document.querySelector('[data-train-group="1"]').style.left),
     station: window.metro.projectStation(1).x,
   }));
-  assert.ok(Math.abs(recentered.x - recentered.station) <= 1.01, `overview tap reprojects parked group within CSS pixel rounding without a tick: ${JSON.stringify(recentered)}`);
+  assert.ok(Math.abs(recentered.x - recentered.station) <= 1.01, `zoom reset reprojects parked group within CSS pixel rounding without a tick: ${JSON.stringify(recentered)}`);
   for (let i = 0; i < 4 && !(await group.evaluate(node => node.hidden)); i++) {
     const bounds = await stage.boundingBox();
     const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height - 70;
@@ -196,7 +208,7 @@ try {
     assert.ok(loneSetup.ok, `one parked train: ${JSON.stringify(loneSetup)}`);
     const lone = offscreenPage.locator('[data-train-id]');
     assert.equal(await lone.count(), 1, 'route creates one parked train');
-    await offscreenPage.locator('#map-overview').focus();
+    await offscreenPage.locator('#stage').focus();
     let offscreenPoint;
     for (let i = 0; i < 25; i++) {
       offscreenPoint = await offscreenPage.evaluate(() => {
@@ -230,8 +242,8 @@ try {
     assert.ok(addOffscreen.result.ok, `offscreen second train: ${JSON.stringify(addOffscreen)}`);
     assert.equal(addOffscreen.hidden, true, `group created offscreen is hidden immediately: ${JSON.stringify(addOffscreen)}`);
     const newGroup = offscreenPage.locator('[data-train-group="1"]');
-    await offscreenPage.keyboard.press('ArrowLeft');
-    await offscreenPage.keyboard.press('ArrowLeft');
+    for (let i = 0; i < 24 && await newGroup.evaluate(node => node.hidden); i++)
+      await offscreenPage.keyboard.press('ArrowLeft');
     assert.equal(await newGroup.evaluate(node => node.hidden), false, 'offscreen-created group returns on camera pan');
     await newGroup.click();
     assert.equal(await offscreenPage.locator('#train-detail').isVisible(), true, 'returned group remains clickable');

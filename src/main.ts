@@ -51,8 +51,7 @@ app.innerHTML = `
   </aside>
   <section class="map-panel" aria-label="地铁地图">
     <div class="map-heading"><div><span class="live-dot"></span><span id="map-status">准备出发</span></div><span id="week-label">第 1 周 · 星期一</span></div>
-    <div id="stage"><div id="station-layer"></div><div id="train-layer"></div><div id="context-actions" class="context-actions" hidden></div></div>
-    <canvas id="map-overview" aria-label="地图概览，点击移动视野" tabindex="0"></canvas>
+    <div id="stage" tabindex="0" role="region" aria-label="地铁地图，方向键移动视野"><div id="station-layer"></div><div id="train-layer"></div><div id="context-actions" class="context-actions" hidden></div></div>
     <button id="mobile-crowd-alert" type="button" hidden>拥挤车站</button>
     <button id="map-alerts" type="button" aria-label="查看地图拥挤车站" hidden></button>
     <div id="station-peek" role="status" aria-live="polite" hidden></div>
@@ -95,6 +94,11 @@ const stage = $('stage'),
   trainLayer = $('train-layer'),
   controller = new MetroController();
 let mobileMap = window.matchMedia('(max-width: 650px)').matches;
+function syncMapKeyboardTarget(): void {
+  stage.tabIndex = mobileMap ? 0 : -1;
+  stage.setAttribute('aria-label', mobileMap ? '地铁地图，方向键移动视野' : '地铁地图');
+}
+syncMapKeyboardTarget();
 const shortPhone = window.matchMedia('(max-width: 650px) and (max-height: 600px)');
 let mapFirst = false;
 let normalZoom = 0.55;
@@ -113,7 +117,7 @@ function setMapFirst(open: boolean, saveNormalZoom = true): void {
     if (stage.clientWidth >= 500 && stage.clientWidth > stage.clientHeight && stage.clientHeight < 300 && !renderer.hasUserCamera()) renderer.frameOpeningStations();
     else renderer.setZoom(stage.clientWidth < 360 && stage.clientWidth <= stage.clientHeight ? 0.55 : Math.max(1, renderer.getZoom()));
   } else renderer.setZoom(normalZoom);
-  if (mobileMap) drawOverview();
+  if (mobileMap) syncMobileCameraTargets();
 }
 $('map-first-toggle').onclick = () => setMapFirst(!mapFirst);
 shortPhone.addEventListener('change', () => {
@@ -123,7 +127,7 @@ shortPhone.addEventListener('change', () => {
   setMapFirst(shortPhone.matches, false);
   if (!shortPhone.matches && tallMobileZoom !== null) renderer.setZoom(tallMobileZoom);
 });
-let renderer: MetroRenderer | Mobile3DRenderer = mobileMap ? new Mobile3DRenderer(stage, drawOverview) : new MetroRenderer(stage);
+let renderer: MetroRenderer | Mobile3DRenderer = mobileMap ? new Mobile3DRenderer(stage, syncMobileCameraTargets) : new MetroRenderer(stage);
 let mobileCameraSnapshot: ReturnType<Mobile3DRenderer['cameraState']> | null = null;
 const audio = new MetroAudio();
 const LINE_NAMES = ['红线', '黄线', '青线', '紫线', '绿线', '粉线', '蓝灰线'];
@@ -447,7 +451,7 @@ function layoutHandles(): Map<string, { x: number; y: number }> {
   const blocked: HitRect[] = [
     ...nodes.values(),
     ...trainLayer.querySelectorAll<HTMLElement>('[data-train-id], [data-train-group]'),
-    ...document.querySelectorAll<HTMLElement>('#context-actions, #mobile-crowd-alert, #map-overview, #queue-browser-toggle, #map-alerts, .map-tools, #creative-picker'),
+    ...document.querySelectorAll<HTMLElement>('#context-actions, #mobile-crowd-alert, #queue-browser-toggle, #map-alerts, .map-tools, #creative-picker'),
   ].filter(el => !el.hidden && el.getClientRects().length > 0)
     .map(el => el.getBoundingClientRect());
   if (renderer instanceof Mobile3DRenderer) {
@@ -715,7 +719,7 @@ stage.addEventListener('pointermove', (e) => {
   if (panning) {
     if (placing) suppressCreativeClick = true;
     renderer.pan(e.clientX - panning.x, e.clientY - panning.y);
-    if (mobileMap) drawOverview();
+    if (mobileMap) syncMobileCameraTargets();
     panning = { x: e.clientX, y: e.clientY };
     return;
   }
@@ -755,7 +759,7 @@ stage.addEventListener('pointermove', (e) => {
     const edge = 25, box = stage.getBoundingClientRect();
     const dx = e.clientX < box.left + edge ? 12 : e.clientX > box.right - edge ? -12 : 0;
     const dy = e.clientY < box.top + edge ? 12 : e.clientY > box.bottom - edge ? -12 : 0;
-    if (dx || dy) { renderer.pan(dx, dy); drawOverview(); }
+    if (dx || dy) { renderer.pan(dx, dy); syncMobileCameraTargets(); }
   }
   const id = nearest(e.clientX, e.clientY);
   if (gestureKind === 'endpoint') {
@@ -833,14 +837,21 @@ function showStationPeek(id: number): void {
 function focusPeekStation(id: number): void {
   const mobileRenderer = renderer;
   if (!(mobileRenderer instanceof Mobile3DRenderer)) return;
-  const point = mobileRenderer.mapStats().bounds.find(p => p.id === id);
-  if (!point) return;
-  // The detail strip changes the canvas bounds; center after ResizeObserver has resized it.
-  requestAnimationFrame(() => {
-    if ($('station-peek').hidden || selectedStation !== id) return;
-    mobileRenderer.centerAt(point.x, point.y + (mapFirst ? Math.min((point.pile?.height ?? 0) / 5, 65) : 0));
-    drawOverview();
-  });
+  const station = controller.getState().stations.find(p => p.id === id);
+  if (!station) return;
+  // The detail strip changes the canvas bounds. Aim the projected roof at a
+  // drawable row after each of the next two ResizeObserver frames.
+  let remaining = 3;
+  const settle = () => {
+    if ($('station-peek').hidden || selectedStation !== id || renderer !== mobileRenderer) return;
+    const roof = mobileRenderer.project(station.x, station.y, 0.6).y;
+    if (roof < 22 || roof > stage.clientHeight - 22) {
+      mobileRenderer.centerStationAt(station.x, station.y, Math.max(22, stage.clientHeight / 2));
+      syncMobileCameraTargets();
+    }
+    if (--remaining > 0) requestAnimationFrame(settle);
+  };
+  requestAnimationFrame(settle);
 }
 function finishDraw(e: PointerEvent): void {
   if (gesturePointer !== null && gesturePointer !== e.pointerId) return;
@@ -898,7 +909,7 @@ stage.addEventListener('pointerup', (e) => {
   if (gesturePointer !== null && e.pointerId !== gesturePointer) return;
   panning = null;
   finishDraw(e);
-  if (mobileMap) drawOverview();
+  if (mobileMap) syncMobileCameraTargets();
 });
 stage.addEventListener('pointercancel', () => {
   panning = null;
@@ -924,7 +935,7 @@ stage.addEventListener('pointermove', e => {
   if (!pinchBaseline || pinchPointers.size !== 2) return;
   const [a,b] = [...pinchPointers.values()];
   renderer.setZoom(pinchBaseline.zoom * Math.hypot(a.x-b.x,a.y-b.y) / Math.max(1,pinchBaseline.distance));
-  drawOverview();
+  syncMobileCameraTargets();
   e.stopImmediatePropagation();
 }, {capture:true});
 for (const type of ['pointerup','pointercancel'] as const)
@@ -943,7 +954,7 @@ stage.addEventListener(
   (e) => {
     e.preventDefault();
     renderer.setZoom(renderer.getZoom() + (e.deltaY < 0 ? 0.1 : -0.1));
-    if (mobileMap) drawOverview();
+    if (mobileMap) syncMobileCameraTargets();
   },
   { passive: false },
 );
@@ -969,18 +980,6 @@ function removeStation(id: number): void {
 let alertCycle: number[] = [];
 let mobileCrowdIndex = 0;
 let alertCycleReplayKey: string | null = null;
-const overview = $<HTMLCanvasElement>('map-overview');
-overview.hidden = !mobileMap;
-function overviewFrame() {
-  if (!(renderer instanceof Mobile3DRenderer)) return null;
-  const points=renderer.mapStats().bounds;
-  if (!points.length) return null;
-  const left=Math.min(...points.map(p=>p.x-40)), right=Math.max(...points.map(p=>p.x+40));
-  const top=Math.min(...points.map(p=>p.y-24)), bottom=Math.max(...points.map(p=>p.pile ? p.pile.y+p.pile.height+12 : p.y+42));
-  const width=overview.clientWidth, height=overview.clientHeight;
-  const scale=Math.min((width-12)/Math.max(right-left,1),(height-12)/Math.max(bottom-top,1));
-  return {left,top,right,bottom,scale,x:(width-(right-left)*scale)/2,y:(height-(bottom-top)*scale)/2};
-}
 // Measure the transformed DOM hit box, not its world-space station/track point.
 // Revealing first also gives correct dimensions when a prior pan hid the badge.
 function mobileBadgeOffstage(badge: HTMLButtonElement, stageBounds: DOMRect): boolean {
@@ -1020,60 +1019,20 @@ function reprojectMobileTargets(): void {
     badge.hidden = mobileBadgeOffstage(badge, bounds);
   }
 }
-function drawOverview(): void {
+function syncMobileCameraTargets(): void {
   reprojectMobileTargets();
   paintHandles();
-  if (!(renderer instanceof Mobile3DRenderer) || !overview.clientWidth) return;
-  const frame=overviewFrame(); if(!frame)return;
-  const ratio=Math.min(devicePixelRatio||1,2), width=overview.clientWidth,height=overview.clientHeight;
-  if(overview.width!==Math.round(width*ratio)||overview.height!==Math.round(height*ratio)) {
-    overview.width=Math.round(width*ratio);overview.height=Math.round(height*ratio);
-  }
-  const c=overview.getContext('2d')!;c.setTransform(ratio,0,0,ratio,0,0);
-  c.fillStyle='#fffaf7';c.fillRect(0,0,width,height);
-  const {scale,x,y,left,top}=frame;
-  if (renderer instanceof Mobile3DRenderer) {
-    const points=new Map(renderer.mapStats().bounds.map(p=>[p.id,p]));
-    c.lineWidth=1.8;
-    for(const line of controller.getState().lines) {
-      c.strokeStyle=LINE_COLORS[line.id];c.beginPath();
-      line.stops.forEach((id,index)=>{
-        const p=points.get(id);if(!p)return;
-        const px=x+(p.x-left)*scale,py=y+(p.y-top)*scale;
-        if(index===0)c.moveTo(px,py);else c.lineTo(px,py);
-      });
-      c.stroke();
-    }
-  }
-  for(const p of renderer.mapStats().bounds) {
-    c.fillStyle=p.pile?'#ddd2e1':'#a692b0';
-    if(p.pile)c.fillRect(x+(p.pile.x-left)*scale,y+(p.pile.y-top)*scale,Math.max(2,p.pile.width*scale),Math.max(2,p.pile.height*scale));
-    c.fillStyle='#745b88';c.beginPath();c.arc(x+(p.x-left)*scale,y+(p.y-top)*scale,2.6,0,Math.PI*2);c.fill();
-  }
-  // Trace the actual projected camera frustum, not a pixel/zoom approximation.
-  const { viewport } = renderer.mapStats();
-  c.strokeStyle='#bb739d';c.lineWidth=1.5;
-  c.strokeRect(x+(viewport.x-left)*scale, y+(viewport.y-top)*scale,
-    viewport.width*scale, viewport.height*scale);
 }
-overview.addEventListener('pointerdown', e => {
-  if (!(renderer instanceof Mobile3DRenderer)) return;
-  const frame=overviewFrame();if(!frame)return;
-  const rect=overview.getBoundingClientRect();
-  // A short normal-mode map is only 152px tall when the alert is present;
-  // bias the overview tap slightly upward so its first passenger row is not clipped.
-  const shortNormalInset = shortPhone.matches && !mapFirst ? 12 : 0;
-  renderer.centerAt(frame.left+(e.clientX-rect.left-frame.x)/frame.scale,
-    frame.top+(e.clientY-rect.top-frame.y)/frame.scale + (stage.clientHeight/4-shortNormalInset)/renderer.getZoom());
-  drawOverview();
-});
-overview.addEventListener('keydown',e=>{
-  if(!(renderer instanceof Mobile3DRenderer))return;
-  const center=renderer.mapStats().center;
-  if(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown') {
-    e.preventDefault();renderer.centerAt(center.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0),
-      center.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0));drawOverview();
-  }
+stage.addEventListener('keydown', e => {
+  // Station and route handles retain their own keyboard behavior. Arrow keys
+  // navigate only when the map region itself owns focus.
+  if (e.target !== stage || !(renderer instanceof Mobile3DRenderer)) return;
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+  e.preventDefault();
+  const center = renderer.mapStats().center;
+  renderer.centerAt(center.x + (e.key === 'ArrowLeft' ? -80 : e.key === 'ArrowRight' ? 80 : 0),
+    center.y + (e.key === 'ArrowUp' ? -80 : e.key === 'ArrowDown' ? 80 : 0));
+  syncMobileCameraTargets();
 });
 function update(): void {
   const { state: s, events, motion } = controller.getRenderSnapshot();
@@ -1091,7 +1050,7 @@ function update(): void {
   lastState = s;
   $('creative-picker').hidden = integrationSurface || s.mode !== 'creative' || controller.mode === 'replay';
   renderer.render(s, controller.selectedLine, events, motion);
-  if (mobileMap) drawOverview();
+  if (mobileMap) syncMobileCameraTargets();
   if (!integrationSurface) {
     $('train-detail').hidden = true;
     $('station-detail').hidden = true;
@@ -1467,16 +1426,16 @@ window.matchMedia('(max-width: 650px)').addEventListener('change', event => {
   if (!event.matches && renderer instanceof Mobile3DRenderer) mobileCameraSnapshot = renderer.cameraState();
   renderer.dispose();
   mobileMap = event.matches;
-  renderer = mobileMap ? new Mobile3DRenderer(stage, drawOverview) : new MetroRenderer(stage);
+  syncMapKeyboardTarget();
+  renderer = mobileMap ? new Mobile3DRenderer(stage, syncMobileCameraTargets) : new MetroRenderer(stage);
   if (mobileMap && shortPhone.matches) renderer.setZoom(normalZoom);
-  overview.hidden = !mobileMap;
   stationKey = trainKey = detailKey = '';
   update();
   if (mobileMap && shortPhone.matches) setMapFirst(true);
   if (mobileMap && mobileCameraSnapshot && renderer instanceof Mobile3DRenderer) {
     renderer.restoreCamera(mobileCameraSnapshot);
     mobileCameraSnapshot = null;
-    drawOverview();
+    syncMobileCameraTargets();
   }
   syncQueueFocusControls();
 });
@@ -1546,7 +1505,7 @@ function queueBrowserFocus(pile:boolean):void {
       // Move it back before measuring the pile against the resized viewport.
       if(roof<minRoof || roof>stage.clientHeight-56) {
         mobileRenderer.centerStationAt(station.x,station.y,minRoof);
-        drawOverview();
+        syncMobileCameraTargets();
         if(--remaining>0)requestAnimationFrame(settle);
         return;
       }
@@ -1554,12 +1513,12 @@ function queueBrowserFocus(pile:boolean):void {
       const upper=stage.clientHeight-12-(pileBottom-roof);
       const target=Math.max(minRoof,Math.min(roof,upper));
       if(Math.abs(target-roof)>0.5)mobileRenderer.centerStationAt(station.x,station.y,target);
-      drawOverview();
+      syncMobileCameraTargets();
       if(--remaining>0)requestAnimationFrame(settle);
     };
     requestAnimationFrame(settle);
   } else renderer.centerAt(p.x,p.y);
-  drawOverview();
+  syncMobileCameraTargets();
 }
 $('queue-focus-station').onclick=()=>queueBrowserFocus(false);
 $('queue-focus-pile').onclick=()=>queueBrowserFocus(true);
@@ -1574,9 +1533,25 @@ $('mobile-crowd-alert').onclick = () => {
   const mapPoint = renderer.mapStats().bounds.find(p => p.id === station.id);
   if (!mapPoint) return;
   if (mapFirst) renderer.setZoom(Math.max(1.4, renderer.getZoom()));
-  renderer.centerAt(mapPoint.x, mapPoint.y + (mapPoint.pile?.height ?? 0) / 2);
-  drawOverview();
+  // A crowd focus should prioritize the selected station's 44px target over
+  // its pile's midpoint; the queue browser provides separate pile focus.
+  renderer.centerStationAt(station.x, station.y, Math.max(22, stage.clientHeight / 2));
+  syncMobileCameraTargets();
   if (integrationSurface) showStationPeek(station.id);
+  // Owner-cue rows and station detail can resize the canvas after this click.
+  // Keep the same focused roof inside the final drawable bounds.
+  const mobileRenderer = renderer;
+  let remaining = 3;
+  const settleCrowd = () => {
+    if (renderer !== mobileRenderer) return;
+    const roof = mobileRenderer.project(station.x, station.y, 0.6).y;
+    if (roof < 22 || roof > stage.clientHeight - 22) {
+      mobileRenderer.centerStationAt(station.x, station.y, Math.max(22, stage.clientHeight / 2));
+      syncMobileCameraTargets();
+    }
+    if (--remaining > 0) requestAnimationFrame(settleCrowd);
+  };
+  requestAnimationFrame(settleCrowd);
 };
 $('map-alerts').onclick = () => {
   const s = controller.getState();
@@ -1710,13 +1685,13 @@ $('tab-replay').onclick = () => setTab(true);
 $('sound').onclick = async () => {
   $('sound').classList.toggle('sound-on', !(await audio.toggle()));
 };
-$('zoom-in').onclick = () => { renderer.setZoom(renderer.getZoom() + 0.15); if (mobileMap) drawOverview(); };
-$('zoom-out').onclick = () => { renderer.setZoom(renderer.getZoom() - 0.15); if (mobileMap) drawOverview(); };
+$('zoom-in').onclick = () => { renderer.setZoom(renderer.getZoom() + 0.15); if (mobileMap) syncMobileCameraTargets(); };
+$('zoom-out').onclick = () => { renderer.setZoom(renderer.getZoom() - 0.15); if (mobileMap) syncMobileCameraTargets(); };
 $('zoom-reset').onclick = () => {
   renderer.resetCamera();
   if (mapFirst && renderer instanceof Mobile3DRenderer && stage.clientWidth <= stage.clientHeight)
     renderer.setZoom(stage.clientWidth < 360 ? 0.55 : 1);
-  if (mobileMap) drawOverview();
+  if (mobileMap) syncMobileCameraTargets();
 };
 function download(name: string, content: Blob | string): void {
   const url = typeof content === 'string' ? content : URL.createObjectURL(content),

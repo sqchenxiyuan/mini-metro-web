@@ -47,7 +47,7 @@ async function assertReachable() {
 }
 async function targetVisible(side) {
   // Built-in camera control, never hidden DOM dispatch or programmatic route mutation.
-  await page.locator('#map-overview').focus();
+  await page.locator('#stage').focus();
   for (let i = 0; i < 10; i++) {
     const stage = await page.locator('#stage').boundingBox();
     const target = await page.locator('[data-station="3"]').boundingBox();

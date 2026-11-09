@@ -51,14 +51,14 @@ try {
     assert.equal(await page.locator('#line-chooser').count(),1,`${label}: collapsed active-line chooser exists`);
     const closed=await page.evaluate(()=>{
       const box=s=>document.querySelector(s).getBoundingClientRect().toJSON();
-      return {active:box('.line-choice.active'),trigger:box('#line-chooser'),stage:box('#stage'),tools:box('#line-tools-toggle'),overview:box('#map-overview'),mapTools:box('.map-tools'),viewport:[innerWidth,innerHeight],document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight],text:document.querySelector('#line-chooser').textContent,expanded:document.querySelector('#line-chooser').getAttribute('aria-expanded')};
+      return {active:box('.line-choice.active'),trigger:box('#line-chooser'),stage:box('#stage'),tools:box('#line-tools-toggle'),mapTools:box('.map-tools'),viewport:[innerWidth,innerHeight],document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight],text:document.querySelector('#line-chooser').textContent,expanded:document.querySelector('#line-chooser').getAttribute('aria-expanded')};
     });
     assert.match(closed.text,/7/,`${label}: collapsed active line visible after keyboard shortcut`);
     assert.equal(closed.expanded,'false',`${label}: chooser starts closed`);
     assert.ok(closed.trigger.width>=44&&closed.trigger.height>=44,`${label}: 44px chooser target`);
     assert.ok(closed.trigger.x>=0&&closed.trigger.right<=width&&closed.trigger.y>=0&&closed.trigger.bottom<=height,`${label}: chooser in viewport ${JSON.stringify(closed)}`);
     assert.deepEqual(closed.document,closed.viewport,`${label}: native viewport`);
-    for(const barrier of [closed.stage,closed.tools,closed.overview,closed.mapTools])assert.ok(!overlap(closed.trigger,barrier),`${label}: trigger overlaps map/control ${JSON.stringify(barrier)}`);
+    for(const barrier of [closed.stage,closed.tools,closed.mapTools])assert.ok(!overlap(closed.trigger,barrier),`${label}: trigger overlaps map/control ${JSON.stringify(barrier)}`);
     await page.screenshot({path:`${output}/${label}-line7-keyboard.png`});
     await page.locator('#line-chooser').click();
     assert.equal(await page.locator('#line-chooser').getAttribute('aria-expanded'),'true',`${label}: chooser opens`);
@@ -75,6 +75,7 @@ try {
     await page.screenshot({path:`${output}/${label}-line4-touch.png`});
     await page.locator('#mobile-crowd-alert').click();
     assert.equal(await page.locator('#station-peek').isVisible(),false,`${label}: ordinary page has no legacy peek`);
+    await page.waitForTimeout(70);
     const focus=await page.evaluate(()=>{
       const stations=window.metro.getState().stations.filter(s=>s.crowd>0).sort((a,b)=>b.crowd-a.crowd||a.id-b.id);
       const stage=document.querySelector('#stage').getBoundingClientRect();

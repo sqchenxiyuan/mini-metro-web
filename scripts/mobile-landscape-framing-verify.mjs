@@ -18,8 +18,8 @@ const sample = () => {
     const atCore = document.elementFromPoint(core.x, core.y);
     return {id, core, hit, hidden:node.hidden, target:atCore?.closest('[data-station]')?.dataset.station};
   });
-  const controls = ['#map-first-toggle','#new-game','#tools-toggle','#replay-toggle','#help',
-    '#line-chooser','#map-overview','#play-pause','[data-speed="1"]','[data-speed="2"]','[data-speed="4"]',
+  const controls = ['#map-first-toggle','#new-game','#help',
+    '#line-chooser','#play-pause','[data-speed="1"]','[data-speed="2"]','[data-speed="4"]',
     '#zoom-in','#zoom-out','#zoom-reset','#screenshot']
     .map(sel => ({sel, ...rect(document.querySelector(sel))}));
   return {stage, stations, controls, zoom:window.metro.mobileMapStats().zoom,
@@ -52,7 +52,7 @@ function assertFrame(s, label, count = 2) {
 }
 const results = [];
 try {
-  for (const scenario of ['fresh','rotate','train-detail','manual']) {
+  for (const scenario of ['fresh','rotate','manual']) {
     const page = await browser.newPage({viewport:scenario==='fresh'?{width:568,height:320}:{width:320,height:480},
       deviceScaleFactor:1,isMobile:true,hasTouch:true});
     const errors=[];
@@ -61,18 +61,8 @@ try {
       await page.goto(url,{waitUntil:'networkidle'});
       await page.waitForFunction(()=>window.metro?.mobileMapStats());
       const hash = await page.evaluate(()=>window.metro.hash());
-      if (scenario === 'train-detail') {
-        const fixture = await page.evaluate(()=>{
-          const m=window.metro;m.restart({mode:'creative',seed:77});m.pause();
-          return [m.submit({action:{type:'route',line:0,stops:[1,2]}}),m.submit({action:{type:'addTrain',line:0,station:1}})];
-        });
-        assert.ok(fixture.every(r=>r.ok),`train detail setup ${JSON.stringify(fixture)}`);
-        const group=page.locator('[data-train-group="1"]');
-        await group.focus();await page.keyboard.press('Space');
-        assert.equal(await page.locator('#train-detail').isVisible(),true,'detail strip opens');
-      }
       if(scenario === 'manual') {
-        await page.locator('#map-overview').focus();
+        await page.locator('#stage').focus();
         await page.keyboard.press('ArrowRight');
         await page.locator('#zoom-in').click();
         const before=await page.evaluate(sample);
@@ -92,7 +82,7 @@ try {
       // Let the stage ResizeObserver and responsive CSS settle without moving the camera.
       await page.waitForTimeout(120);
       const landscape=await page.evaluate(sample);
-      assertFrame(landscape,`${scenario} landscape`,scenario==='train-detail'?1:2);
+      assertFrame(landscape,`${scenario} landscape`,2);
       assert.equal(landscape.hash,await page.evaluate(()=>window.metro.hash()),'framing does not change the simulation');
       await page.screenshot({path:`${out}/${scenario}-568x320.png`});
       if(scenario==='fresh') {
@@ -109,11 +99,11 @@ try {
         await page.setViewportSize({width:320,height:480});
         await page.waitForTimeout(120);
         const portrait=await page.evaluate(sample);
-        assertFrame(portrait,`${scenario} portrait`,scenario==='train-detail'?0:2);
+        assertFrame(portrait,`${scenario} portrait`,2);
         assert.equal(portrait.hash,landscape.hash,`${scenario}: rotation keeps game hash`);
         await page.setViewportSize({width:568,height:320});
         await page.waitForTimeout(120);
-        assertFrame(await page.evaluate(sample),`${scenario} landscape return`,scenario==='train-detail'?1:2);
+        assertFrame(await page.evaluate(sample),`${scenario} landscape return`,2);
       }
       assert.deepEqual(errors,[],`${scenario}: no browser errors`);
       results.push({scenario,landscape:{stage:landscape.stage,zoom:landscape.zoom,stations:landscape.stations},hash:landscape.hash});

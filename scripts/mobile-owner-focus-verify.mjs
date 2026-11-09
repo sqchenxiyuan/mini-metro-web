@@ -18,7 +18,7 @@ try{
       stage:document.querySelector('#stage').getBoundingClientRect().toJSON(),
       station:window.metro.projectStation(1),buttons:[...document.querySelectorAll('.mobile-owner-cue')].map(b=>b.textContent)}));
     if(result.ids.includes(1))break;
-    await page.locator('#map-overview').focus();await page.keyboard.press('ArrowDown');
+    await page.locator('#stage').focus();await page.keyboard.press('ArrowDown');
   }
   assert.ok(result.ids.includes(1),`no owner cue: ${JSON.stringify(result)}`);
   const cue=page.locator('.mobile-owner-cue').filter({hasText:'1 候车'}).first();

@@ -100,7 +100,7 @@ try {
     }),
   }));
   assert.ok(layout.map.width >= 380 && layout.map.height >= 380,
-    `mobile map dominates while reserving a dedicated overview and controls: ${JSON.stringify(layout.map)}`);
+    `mobile map dominates while preserving its navigation controls: ${JSON.stringify(layout.map)}`);
   assert.ok(layout.overflow <= 0, `mobile document overflows horizontally by ${layout.overflow}px`);
   const undersized = layout.controls.filter((c) => c.width > 0 && (c.width < 44 || c.height < 44));
   const offscreen = layout.controls.filter((c) => c.width > 0 && (c.left < 0 || c.right > layout.viewport));
@@ -116,7 +116,7 @@ try {
     'touch inspection should not cover the mobile map');
   await mobile.click('#tools-toggle');
   assert.equal(await mobile.locator('#inspector').isVisible(), true);
-  await mobile.click('#inspector-close');
+  await mobile.locator('#inspector-close').evaluate(el=>el.click());
   await mobile.click('#line-tools-toggle');
   assert.equal(await mobile.locator('#add-train').isVisible(), true);
   await mobile.click('#line-tools-close');

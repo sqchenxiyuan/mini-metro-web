@@ -23,6 +23,23 @@ try {
     page.on('pageerror', e => errors.push(`${width}: ${String(e)}`));
     await page.goto(`${origin}/`, {waitUntil:'networkidle'});
     await page.waitForFunction(() => window.metro && document.querySelector('#stage canvas'));
+    assert.equal(await page.locator('#map-overview').count(), 0, 'mobile map has no permanent miniature canvas');
+    const keyboardMap = page.locator('#stage');
+    assert.equal(await keyboardMap.getAttribute('tabindex'), '0', 'map is keyboard focusable');
+    assert.match(await keyboardMap.getAttribute('aria-label'), /方向键/, 'map describes keyboard panning');
+    const keyboardHash = await page.evaluate(() => window.metro.hash());
+    const keyboardBefore = await page.evaluate(() => window.metro.mobileMapStats().center);
+    await page.keyboard.press('ArrowDown');
+    assert.deepEqual(await page.evaluate(() => window.metro.mobileMapStats().center), keyboardBefore, 'unfocused arrows do not pan map');
+    await keyboardMap.focus();
+    await page.keyboard.press('ArrowDown');
+    assert.notDeepEqual(await page.evaluate(() => window.metro.mobileMapStats().center), keyboardBefore, 'focused map arrows pan camera');
+    const childBefore = await page.evaluate(() => window.metro.mobileMapStats().center);
+    await page.locator('[data-station="1"]').focus();
+    await page.keyboard.press('ArrowDown');
+    assert.deepEqual(await page.evaluate(() => window.metro.mobileMapStats().center), childBefore, 'focused station does not trigger map pan');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-station')), '1', 'station retains keyboard focus');
+    assert.equal(await page.evaluate(() => window.metro.hash()), keyboardHash, 'keyboard pan does not change game state');
     const shape = await page.locator('#stage canvas').evaluate(c => ({webgl: Boolean(c.getContext('webgl2') || c.getContext('webgl')), width:c.width, height:c.height}));
     assert.equal(shape.webgl, true, `${width}x${height} narrow stage must use WebGL`);
     const stage = await page.locator('#stage').boundingBox();
@@ -44,18 +61,22 @@ try {
     assert.ok(Math.hypot(after.x-panning.x,after.y-panning.y)>5, 'touch pan moves station projection');
     const targetAfterPan=await page.locator('[data-station="1"]').boundingBox();
     assert.ok(Math.abs(targetAfterPan.x+targetAfterPan.width/2-after.x)<1 && Math.abs(targetAfterPan.y+5-after.y)<1,`DOM hit target follows touch pan: ${JSON.stringify({targetAfterPan,after})}`);
-    const beforeOverview = await page.evaluate(() => window.metro.mobileMapStats().center);
-    await page.locator('#map-overview').click({position:{x:10,y:10}});
-    const afterOverview = await page.evaluate(() => window.metro.mobileMapStats().center);
-    assert.notDeepEqual(afterOverview,beforeOverview,'overview moves camera');
-    const afterOverviewPoint=await page.evaluate(() => window.metro.projectStation(1));
-    const targetAfterOverview=await page.locator('[data-station="1"]').boundingBox();
-    assert.ok(Math.abs(targetAfterOverview.x+targetAfterOverview.width/2-afterOverviewPoint.x)<1 && Math.abs(targetAfterOverview.y+5-afterOverviewPoint.y)<1,'DOM hit target follows overview');
+    const beforeKeyPan = await page.evaluate(() => window.metro.mobileMapStats().center);
+    await keyboardMap.focus();
+    await page.keyboard.press('ArrowRight');
+    const afterKeyPan = await page.evaluate(() => window.metro.mobileMapStats().center);
+    assert.notDeepEqual(afterKeyPan,beforeKeyPan,'keyboard map pan moves camera');
+    const afterKeyPanPoint=await page.evaluate(() => window.metro.projectStation(1));
+    const targetAfterKeyPan=await page.locator('[data-station="1"]').boundingBox();
+    assert.ok(Math.abs(targetAfterKeyPan.x+targetAfterKeyPan.width/2-afterKeyPanPoint.x)<1 && Math.abs(targetAfterKeyPan.y+5-afterKeyPanPoint.y)<1,'DOM hit target follows keyboard pan');
     assert.notEqual(hash, await page.evaluate(() => window.metro.hash()), 'route changes simulation state');
     await page.locator('#zoom-in').click();
     await page.waitForTimeout(80);
     assert.equal((await page.locator('#stage canvas').count()),1);
-    const zoomBeforePinch=await page.evaluate(() => window.metro.mobileMapStats().zoom);
+    const zoomAfterButton=await page.evaluate(() => window.metro.mobileMapStats().zoom);
+    await page.locator('#zoom-reset').click();
+    assert.notEqual(await page.evaluate(() => window.metro.mobileMapStats().zoom),zoomAfterButton,'zoom reset restores the camera');
+    const zoomBeforePinch=await page.evaluate(()=>window.metro.mobileMapStats().zoom);
     const session=await page.context().newCDPSession(page);
     const mx=stage.x+stage.width/2,my=stage.y+stage.height/2;
     const tp=(id,x,y)=>({id,x,y,radiusX:1,radiusY:1,force:.5});
@@ -93,7 +114,9 @@ try {
     await page.screenshot({path:`${output}/${width}x${height}-queue.png`});
     // A ten-shape grouped pile extends well below its roof at fixed CSS-pixel
     // offsets, including after the owner cue reserves its own stage row.
-    await page.locator('#map-overview').focus();
+    await keyboardMap.focus();
+    await page.locator('#zoom-reset').click();
+    await keyboardMap.focus();
     await page.evaluate(() => {
       const station=window.metro.controller.session.state.stations[0];
       station.queue=Array.from({length:21},(_,i)=>({id:900+i,shape:['triangle','square','circle','diamond','star','cross','pentagon','egg','gem','wedge'][i%10],born:0,transfers:0}));
@@ -125,17 +148,14 @@ try {
     }
     const cue=page.locator('.mobile-owner-cue').filter({hasText:'1 候车'}).first();
     assert.equal(await cue.isVisible(),true);
-    try { await cue.click({timeout:3500}); }
-    catch(error) {
-      const samples=[];
-      for(let i=0;i<12;i++) {
-        samples.push(await page.evaluate(()=>({time:performance.now(),stage:document.querySelector('#stage').getBoundingClientRect().toJSON(),station:window.metro.projectStation(1),ownerCueIds:window.metro.mobileMapStats().ownerCueIds,
-          center:window.metro.mobileMapStats().center,zoom:window.metro.mobileMapStats().zoom,cue:[...document.querySelectorAll('.mobile-owner-cue')].map(n=>n.getBoundingClientRect().toJSON()),
-          groups:window.metro.mobileMapStats().queueGroups.find(g=>g.stationId===1)?.groups})));
-        await page.waitForTimeout(35);
-      }
-      throw new Error(`owner cue native click failed ${width}x${height}: ${JSON.stringify(samples)}`,{cause:error});
-    }
+    const cueHit = await cue.evaluate(node => {
+      const r = node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint((r.left+r.right)/2,(r.top+r.bottom)/2));
+    });
+    assert.equal(cueHit,true,`owner cue must receive the native pointer at ${width}x${height}`);
+    const cueHash=await page.evaluate(()=>window.metro.hash());
+    await cue.click({timeout:3500});
+    assert.equal(await page.evaluate(()=>window.metro.hash()),cueHash,'owner cue click does not mutate simulation');
     const owner=await page.evaluate(()=>window.metro.mobileMapStats());
     assert.ok(Math.abs(owner.center.x-owner.bounds.find(b=>b.id===1).x)<1,'owner cue centers station');
     if (width===390) {
@@ -155,6 +175,7 @@ try {
       await page.setViewportSize({width:900,height:600});
       await page.waitForFunction(() => window.metro?.mobileMapStats()===null);
       assert.equal(await page.locator('#stage canvas').evaluate(c=>Boolean(c.getContext('webgl2'))),true);
+      assert.equal(await page.locator('#stage').getAttribute('tabindex'),'-1','desktop stage is not an extra tab stop');
       assert.equal(await page.evaluate(() => window.metro.mobileMapStats()),null,'desktop renderer restored');
       await page.setViewportSize({width:390,height:844});
       await page.waitForFunction(() => window.metro?.mobileMapStats()?.stationCount>=3);

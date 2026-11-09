@@ -8,7 +8,10 @@ const url = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:5175/integration.htm
 
 // A real touch must reach a train badge outside station cores, not a DOM click.
 async function touchTrain(page, label) {
-  const point = await page.evaluate(() => {
+  await page.locator('#stage').focus();
+  let point;
+  for (let attempt = 0; attempt < 14; attempt++) {
+    point = await page.evaluate(() => {
     const stage = document.querySelector('#stage').getBoundingClientRect();
     for (const badge of document.querySelectorAll('[data-train-id]:not([hidden])')) {
       const box = badge.getBoundingClientRect();
@@ -24,6 +27,13 @@ async function touchTrain(page, label) {
     }
     return {missing:true,stage:stage.toJSON(),badges:[...document.querySelectorAll('[data-train-id]')].map(b=>{const hidden=b.hidden;b.hidden=false;const rect=b.getBoundingClientRect().toJSON();b.hidden=hidden;return{id:b.dataset.trainId,hidden,rect}}),camera:window.metro.mobileMapStats().center,scroll:scrollY};
   });
+    if (!point.missing) break;
+    const badge = point.badges[0];
+    const direction = badge.rect.top < point.stage.top + 12 ? 'ArrowUp'
+      : badge.rect.bottom > point.stage.bottom - 12 ? 'ArrowDown'
+      : badge.rect.left >= point.stage.right - 12 ? 'ArrowLeft' : 'ArrowRight';
+    await page.keyboard.press(direction);
+  }
   assert.ok(point && !point.missing, `${label}: train badge has a reachable touch point ${JSON.stringify(point)}`);
   await page.touchscreen.tap(point.x, point.y);
   assert.equal(await page.locator('#train-detail').isVisible(), true,
@@ -33,18 +43,9 @@ async function touchTrain(page, label) {
 
 async function focusTrainOwner(page) {
   const owner = await page.evaluate(() => window.metro.getState().trains[0].from);
-  const coordinate = await page.locator('#map-overview').evaluate((el, id) => {
-    const map = window.metro.mobileMapStats(), point = map.bounds.find(p => p.id === id);
-    if (!point) throw Error(`no map bound for train owner ${id}`);
-    const frame = { left: Math.min(...map.bounds.map(p => p.x - 40)), right: Math.max(...map.bounds.map(p => p.x + 40)),
-      top: Math.min(...map.bounds.map(p => p.y - 24)), bottom: Math.max(...map.bounds.map(p => p.pile ? p.pile.y + p.pile.height + 12 : p.y + 42)) };
-    const scale = Math.min((el.clientWidth - 12) / Math.max(frame.right - frame.left, 1),
-      (el.clientHeight - 12) / Math.max(frame.bottom - frame.top, 1));
-    return { x: (el.clientWidth - (frame.right - frame.left) * scale) / 2 + (point.x - frame.left) * scale,
-      y: (el.clientHeight - (frame.bottom - frame.top) * scale) / 2 + (point.y - frame.top) * scale };
-  }, owner);
-  const box = await page.locator('#map-overview').boundingBox();
-  await page.touchscreen.tap(box.x + coordinate.x, box.y + coordinate.y);
+  await page.locator('#queue-browser-toggle').click();
+  await page.locator(`[data-queue-station="${owner}"]`).click();
+  await page.locator('#queue-focus-station').click();
 }
 
 try {
@@ -85,7 +86,7 @@ try {
       await page.locator('#game-shell').scrollIntoViewIfNeeded();
       await page.waitForTimeout(450); // Camera/ResizeObserver settle before measuring badge hit box.
       if (width === 320) {
-        await page.locator('#map-overview').focus();
+        await page.locator('#stage').focus();
         for (let attempt = 0; attempt < 18 && await page.locator('[data-train-id]').last().evaluate(el => el.hidden); attempt++) {
           const direction = await page.evaluate(() => {
             const badge = [...document.querySelectorAll('[data-train-id]')].at(-1), stage = document.querySelector('#stage').getBoundingClientRect();

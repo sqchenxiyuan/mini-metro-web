@@ -12,32 +12,25 @@ try {
   });
   const count = await page.evaluate(() => window.metro.getState().stations.find(s => s.id === 1).queue.length);
   assert.ok(count > 100);
-  const overview = page.locator('#map-overview');
-  const frame = await page.evaluate(() => ({bounds:window.metro.mobileMapStats().bounds.find(p=>p.id===1), all:window.metro.getState().stations.find(p=>p.id===1).queue.map(q=>q.id)}));
-  const seen = new Set();
-  // Aim from the owning station's actual projected map position rather than
-  // a hard-coded miniature-map pixel that shifts when its size changes.
-  const point = await page.evaluate(() => {
-    const stats=window.metro.mobileMapStats(),p=stats.bounds.find(p=>p.id===1),r=document.querySelector('#map-overview').getBoundingClientRect();
-    const left=Math.min(...stats.bounds.map(v=>v.x-40)),right=Math.max(...stats.bounds.map(v=>v.x+40));
-    const top=Math.min(...stats.bounds.map(v=>v.y-24)),bottom=Math.max(...stats.bounds.map(v=>v.pile?v.pile.y+v.pile.height+12:v.y+42));
-    const scale=Math.min((r.width-12)/(right-left),(r.height-12)/(bottom-top));
-    return {x:(r.width-(right-left)*scale)/2+(p.x-left)*scale,y:(r.height-(bottom-top)*scale)/2+(p.y-top)*scale};
-  });
-  await overview.click({position:point});
-  for(let n=0;n<20;n++) {
-    const ids = await page.evaluate(()=>window.metro.mobileMapStats().visibleDrawnPassengerIds);
-    for(const id of ids) if(frame.all.includes(id)) seen.add(id);
-    await page.mouse.move(180,245);await page.mouse.down();await page.mouse.move(180,145,{steps:2});await page.mouse.up();
-  }
-  assert.deepEqual(seen,new Set(frame.all),'all passengers of a tall pile must be scroll-reachable');
+  const frame = await page.evaluate(() => ({groups:window.metro.mobileMapStats().queueGroups.find(g=>g.stationId===1)?.groups.length,
+    all:window.metro.getState().stations.find(p=>p.id===1).queue.map(q=>q.id)}));
+  assert.equal(frame.groups,await page.evaluate(()=>new Set(window.metro.getState().stations.find(s=>s.id===1).queue.map(q=>q.shape)).size),
+    'dense station groups every destination shape');
+  const beforePan = await page.evaluate(()=>window.metro.mobileMapStats().center);
+  await page.locator('#queue-browser-toggle').click();
+  await page.locator('[data-queue-station="1"]').click();
+  await page.locator('#queue-focus-station').click();
+  const stage=await page.locator('#stage').boundingBox();
+  const x=stage.x+stage.width/2, low=stage.y+stage.height-35;
+  await page.mouse.move(x,low);await page.mouse.down();
+  await page.mouse.move(x,stage.y+45,{steps:8});await page.mouse.up();
+  assert.notDeepEqual(await page.evaluate(()=>window.metro.mobileMapStats().center),beforePan,'genuine drag pans dense mobile map');
+  assert.equal(await page.evaluate(()=>window.metro.mobileMapStats().queueGroups.find(g=>g.stationId===1)?.groups.length),frame.groups,'all destination groups survive pan');
   await page.close();
   const creative = await browser.newPage({viewport:{width:390,height:844},hasTouch:true});
   await creative.goto(process.env.METRO_TEST_URL ?? 'http://127.0.0.1:5175/', {waitUntil:'networkidle'});
   await creative.waitForFunction(()=>window.metro);
   await creative.evaluate(()=>window.metro.restart({mode:'creative',seed:420}));
-  // Set placement through real UI (not private app variables).
-  await creative.locator('#tools-toggle').click();
-  console.log('creative controls',await creative.locator('#inspector').innerText());
+  assert.equal(await creative.evaluate(()=>window.metro.getState().mode),'creative');
   await creative.close();
 } finally { await browser.close(); }

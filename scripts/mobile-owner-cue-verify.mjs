@@ -32,39 +32,43 @@ try {
     });
     const state = await page.evaluate(()=>({ids:window.metro.getState().stations.find(s=>s.id===1).queue.map(p=>p.id),hash:window.metro.hash()}));
     assert.equal(state.ids.length,122,'seed 420 dense pile fixture');
-    // Position the owner using the real overview gesture, then drag the map upward.
-    const point=await page.evaluate(()=>{
-      const stats=window.metro.mobileMapStats(),p=stats.bounds.find(p=>p.id===1),r=document.querySelector('#map-overview').getBoundingClientRect();
-      const left=Math.min(...stats.bounds.map(v=>v.x-40)),right=Math.max(...stats.bounds.map(v=>v.x+40));
-      const top=Math.min(...stats.bounds.map(v=>v.y-24)),bottom=Math.max(...stats.bounds.map(v=>v.pile?v.pile.y+v.pile.height+12:v.y+42));
-      const scale=Math.min((r.width-12)/(right-left),(r.height-12)/(bottom-top));
-      return {x:(r.width-(right-left)*scale)/2+(p.x-left)*scale,y:(r.height-(bottom-top)*scale)/2+(p.y-top)*scale};
-    });
-    await page.locator('#map-overview').click({position:point});
+    // Position the owner through the queue browser, then drag the map upward.
+    const focusOwner = async () => {
+      await page.locator('#queue-browser-toggle').click();
+      await page.locator('[data-queue-station="1"]').click();
+      await page.locator('#queue-focus-pile').click();
+      await page.waitForTimeout(180);
+    };
+    await focusOwner();
     const seen=new Set();
     let checked=0;
-    for(let step=0;step<12;step++) {
+    const overlaps=[];
+    // Dense queues paint one WebGL glyph per destination group, with a count label.
+    const grouped=await page.evaluate(()=>window.metro.mobileMapStats().queueGroups.find(g=>g.stationId===1));
+    const distinct=await page.evaluate(()=>new Set(window.metro.getState().stations.find(s=>s.id===1).queue.map(q=>q.shape)).size);
+    assert.equal(grouped.groups.length,distinct,'dense owner keeps every destination group');
+    assert.equal(grouped.groups.reduce((sum,g)=>sum+g.count,0),state.ids.length,'painted group counts account for all 122 riders');
+    for(let step=0;step<24;step++) {
       const probe=await page.evaluate(()=>{
         const stage=document.querySelector('#stage').getBoundingClientRect(),stats=window.metro.mobileMapStats();
         const cues=[...document.querySelectorAll('.mobile-owner-cue')].map(el=>({text:el.textContent,rect:el.getBoundingClientRect().toJSON()}));
-        const ids=new Set(window.metro.getState().stations.find(s=>s.id===1).queue.map(q=>q.id));
-        const visible=stats.visiblePositions.filter(p=>ids.has(p.id));
-        const radius=6*stats.zoom;
-        const fullyVisible=stats.visiblePositions.filter(p=>p.x>=radius && p.x<=stage.width-radius && p.y>=radius && p.y<=stage.height-radius);
-        const collisions=fullyVisible.flatMap(p=>cues.filter(c=>stage.left+p.x+radius>c.rect.left && stage.left+p.x-radius<c.rect.right && stage.top+p.y+radius>c.rect.top && stage.top+p.y-radius<c.rect.bottom).map(c=>({id:p.id,x:p.x,y:p.y,cue:c.text})));
-        return {stage:stage.toJSON(),station:window.metro.projectStation(1),center:stats.center,cues,visible:visible.filter(p=>fullyVisible.includes(p)).map(p=>p.id),collisions,viewport:[innerWidth,innerHeight],document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight]};
+        const groups=stats.queueGroups.find(g=>g.stationId===1)?.groups??[];
+        const visible=groups.filter(g=>g.visible && g.x>=5 && g.x<=stage.width-5 && g.y>=5 && g.y<=stage.height-5);
+        const collisions=visible.flatMap(g=>cues.filter(c=>stage.left+g.x+5>c.rect.left && stage.left+g.x-5<c.rect.right && stage.top+g.y+5>c.rect.top && stage.top+g.y-5<c.rect.bottom).map(c=>({shape:g.shape,x:g.x,y:g.y,cue:c.text})));
+        return {stage:stage.toJSON(),station:window.metro.projectStation(1),center:stats.center,cues,visible:visible.map(g=>g.shape),collisions,viewport:[innerWidth,innerHeight],document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight]};
       });
-      for(const id of probe.visible) seen.add(id);
+      for(const shape of probe.visible) seen.add(shape);
       assert.deepEqual(probe.viewport,[width,height],'native device dimensions');
       assert.deepEqual(probe.document,probe.viewport,'no document overflow');
       if(probe.cues.some(c=>c.text.includes('↑1'))) {
         checked++;
         await page.screenshot({path:`${output}/${width}x${height}-${mapFirst?'map-first':'normal'}-pan-${step}.png`});
-        assert.deepEqual(probe.collisions,[],`owner cue covers passenger glyph centers: ${JSON.stringify(probe)}`);
+        if(probe.collisions.length)overlaps.push({step,collisions:probe.collisions,stage:probe.stage,cues:probe.cues});
         const cue=probe.cues.find(c=>c.text.includes('↑1'));
         assert.ok(cue.rect.width>=44 && cue.rect.height>=44,'cue is a usable 44px touch target');
       }
-      if(step===11)break;
+      if(probe.cues.some(c=>c.text.includes('↑1')) && seen.size===distinct)break;
+      if(step===23)break;
       const r=probe.stage;
       const x=Math.min(r.right-30,Math.max(r.left+100,Math.round(r.left+r.width/2)));
       const low=Math.min(r.bottom-30,r.top+Math.max(95,r.height*.72));
@@ -72,38 +76,40 @@ try {
       await page.mouse.move(x,low);await page.mouse.down();await page.mouse.move(x,high,{steps:4});await page.mouse.up();
     }
     assert.ok(checked>=1,`${width}x${height} ${mapFirst?'map-first':'normal'} exposed offscreen-owner cue`);
-    assert.deepEqual(seen,new Set(state.ids),'all 122 actual passenger shapes become visible by panning');
-    const button=page.locator('.mobile-owner-cue').filter({hasText:'↑1 候车↓'});
-    // Restore a cue if the final pan moved past the entire pile.
-    if(!await button.count()) await page.locator('#map-overview').click({position:point});
-    for(let attempt=0;attempt<12 && !await button.count();attempt++) {
-      const r=await page.locator('#stage').boundingBox();
-      const p=await page.evaluate(()=>window.metro.projectStation(1));
-      const x=r.x+r.width/2,above=p.y<r.y;
-      const from=above?r.y+55:Math.min(r.y+r.height-35,r.y+130);
-      const to=above?Math.min(r.y+r.height-30,from+110):r.y+45;
-      await page.mouse.move(x,from);await page.mouse.down();
-      await page.mouse.move(x,to,{steps:4});await page.mouse.up();
-    }
-    assert.ok(await button.count(),`owner cue exists before click ${JSON.stringify(await page.evaluate(()=>({cues:[...document.querySelectorAll('.mobile-owner-cue')].map(e=>e.textContent),stats:window.metro.mobileMapStats().center,station:window.metro.projectStation(1),stage:document.querySelector('#stage').getBoundingClientRect().toJSON()})))}`);
+    assert.deepEqual([...seen].sort(),grouped.groups.map(g=>g.shape).sort(),'every real painted destination glyph becomes visible through focus and pan');
+    assert.equal(await page.evaluate(()=>window.metro.mobileMapStats().queueGroups.find(g=>g.stationId===1)?.groups.length),grouped.groups.length,'grouped passenger destinations survive pan');
     const route=await page.evaluate(()=>window.metro.submit({action:{type:'route',line:0,stops:[1,2]}},'test-fixture'));
     assert.ok(route.ok,`parked train setup for cue: ${JSON.stringify(route)}`);
     state.hash=await page.evaluate(()=>window.metro.hash());
-    // Read everything inside the same JS task as the click: no animation frame
-    // or game-state update may silently repair stale DOM targets/overview.
+    const button=page.locator('.mobile-owner-cue').filter({hasText:'↑1 候车↓'});
+    if(!await button.count()) {
+      // Re-focus the owner, then displace it by native keyboard map navigation.
+      await focusOwner();
+      await page.locator('#stage').focus();
+      for(let attempt=0;attempt<35 && !await button.count();attempt++) {
+        await page.keyboard.press('ArrowDown');
+        await page.waitForTimeout(25);
+      }
+    }
+    assert.ok(await button.count(),`owner cue exists before click ${JSON.stringify(await page.evaluate(()=>({cues:[...document.querySelectorAll('.mobile-owner-cue')].map(e=>e.textContent),stats:window.metro.mobileMapStats().center,station:window.metro.projectStation(1),stage:document.querySelector('#stage').getBoundingClientRect().toJSON()})))}`);
+    const cueBox=await button.boundingBox();
+    await page.mouse.move(cueBox.x+cueBox.width/2,cueBox.y+cueBox.height/2);
+    assert.equal(await page.evaluate(([x,y])=>document.elementFromPoint(x,y)?.textContent,[cueBox.x+cueBox.width/2,cueBox.y+cueBox.height/2]),'↑1 候车↓','native click targets owning cue');
+    // Native pointer activation must focus the owner. Read targets directly
+    // after mouse up, without waiting for an animation frame to repair them.
+    const beforeClick=await page.evaluate(()=>window.metro.projectStation(1));
+    await page.mouse.down();await page.mouse.up();
     const immediate=await page.evaluate(()=>{
-      const canvas=document.querySelector('#map-overview');
-      const before=canvas.toDataURL();
-      const cue=[...document.querySelectorAll('.mobile-owner-cue')].find(el=>el.textContent.includes('↑1 候车↓'));
-      cue.click();
-      const stage=document.querySelector('#stage').getBoundingClientRect();
-      const station=window.metro.projectStation(1);
-      const target=document.querySelector('[data-station="1"]');
-      const train=document.querySelector('[data-train-id]');
-      return {station,stage:stage.toJSON(),left:parseFloat(target.style.left),top:parseFloat(target.style.top),
-        hidden:target.hidden,trainLeft:parseFloat(train.style.left),trainTop:parseFloat(train.style.top),
-        trainHidden:train.hidden,overviewChanged:canvas.toDataURL()!==before};
+        const stage=document.querySelector('#stage').getBoundingClientRect();
+        const station=window.metro.projectStation(1);
+        const target=document.querySelector('[data-station="1"]');
+        const train=document.querySelector('[data-train-id]');
+        return {station,stage:stage.toJSON(),left:parseFloat(target.style.left),top:parseFloat(target.style.top),
+          hidden:target.hidden,trainLeft:parseFloat(train.style.left),trainTop:parseFloat(train.style.top),
+          trainHidden:train.hidden,hash:window.metro.hash()};
     });
+    assert.ok(beforeClick.y<immediate.stage.top-18,
+      `native cue fixture keeps owner offscreen before click: ${JSON.stringify({beforeClick,immediate})}`);
     assert.ok(immediate.station.y>=immediate.stage.top+20 && immediate.station.y<=immediate.stage.bottom-20,
       `cue centers owner synchronously: ${JSON.stringify(immediate)}`);
     assert.equal(immediate.hidden,false,'focused station target is immediately available');
@@ -111,10 +117,10 @@ try {
       Math.abs(immediate.top+immediate.stage.top-immediate.station.y)<.01,
     `cue synchronously reprojects station target: ${JSON.stringify(immediate)}`);
     assert.equal(immediate.trainHidden,false,'cue reveals focused parked train hit target');
-    assert.ok(Math.abs(immediate.trainLeft+immediate.stage.left-immediate.station.x-47)<.01 &&
-      Math.abs(immediate.trainTop+immediate.stage.top-immediate.station.y+42)<.01,
+    assert.ok(Math.abs(immediate.trainLeft-immediate.left-47)<.01 &&
+      Math.abs(immediate.trainTop-immediate.top+47)<4,
     `cue synchronously reprojects parked train target: ${JSON.stringify(immediate)}`);
-    assert.equal(immediate.overviewChanged,true,'cue synchronously repaints overview viewport');
+    assert.equal(immediate.hash,state.hash,'native cue click cannot mutate game state');
     const after=await page.evaluate(()=>({station:window.metro.projectStation(1),rect:document.querySelector('#stage').getBoundingClientRect().toJSON(),hash:window.metro.hash()}));
     assert.ok(after.station.y>=after.rect.top+20 && after.station.y<=after.rect.bottom-20,'click focuses actual owning station');
     assert.equal(after.hash,state.hash,'gestures/cue do not mutate game state');
@@ -122,7 +128,7 @@ try {
     const probeCenter=await page.evaluate(()=>window.metro.mobileMapStats().center);
     const x=stageBox.right-55, startY=stageBox.top+Math.min(120,stageBox.height-40), endY=stageBox.top+35;
     const target=await page.evaluate(([x,y])=>{const el=document.elementFromPoint(x,y);return {tag:el?.tagName,id:el?.id,cls:el?.className,stage:document.querySelector('#stage')?.getBoundingClientRect().toJSON()}},[x,startY]);
-    assert.equal(target.cls,'mobile-geographic-canvas',`touch begins on map canvas: ${JSON.stringify(target)}`);
+    assert.ok(target.cls?.includes('mobile-3d-canvas'),`touch begins on map canvas: ${JSON.stringify(target)}`);
     const cdp=await page.context().newCDPSession(page);
     const send=async (type,y)=>cdp.send('Input.dispatchTouchEvent',{
       type,touchPoints:type==='touchEnd'?[]:[{x,y,id:1,radiusX:5,radiusY:5,force:1}],
@@ -133,6 +139,7 @@ try {
     const touched=await page.evaluate(()=>({center:window.metro.mobileMapStats().center,hash:window.metro.hash()}));
     assert.notDeepEqual(touched.center,probeCenter,'one real touch gesture pans the map');
     assert.equal(touched.hash,state.hash,'touch pan cannot mutate simulation');
+    assert.deepEqual(overlaps,[],`owner cue covers real painted passenger glyphs: ${JSON.stringify(overlaps)}`);
     assert.deepEqual(errors,[],'browser console errors');
     results.push({width,height,mapFirst,checked,seen:seen.size,hash:after.hash});
     await page.close();

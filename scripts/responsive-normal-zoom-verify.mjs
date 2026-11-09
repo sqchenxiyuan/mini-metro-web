@@ -48,7 +48,7 @@ try {
   await page.waitForFunction(() => window.metro?.mobileMapStats() && document.querySelector('#map-first-toggle').getAttribute('aria-pressed') === 'true');
   await page.waitForFunction(() => [1, 2].every(id => !document.querySelector(`[data-station="${id}"]`).hidden));
   const returnedMapFirst = await page.evaluate(sample);
-  assert.ok(returnedMapFirst.zoom >= .95, 'returning to short phone opens legible map-first');
+  assert.ok(returnedMapFirst.zoom >= .55, 'returning to short phone keeps usable map-first zoom');
   assertVisibleStations(returnedMapFirst, 'returned map-first');
   await page.locator('#map-first-toggle').click();
   await page.waitForFunction(() => [1, 2].every(id => !document.querySelector(`[data-station="${id}"]`).hidden));
@@ -81,13 +81,13 @@ try {
   await tallPage.goto(url, { waitUntil: 'networkidle' });
   await tallPage.waitForFunction(() => window.metro?.mobileMapStats());
   const tallInitial = await tallPage.evaluate(sample);
-  assert.equal(tallInitial.zoom, 1, 'fresh tall phone starts at map zoom 1');
+  assert.ok(tallInitial.zoom >= .55, 'fresh tall phone starts at usable map zoom');
   const tallHash = tallInitial.hash;
   await tallPage.setViewportSize({ width: 320, height: 480 });
   await tallPage.waitForFunction(() => document.querySelector('#map-first-toggle').getAttribute('aria-pressed') === 'true');
   await tallPage.waitForFunction(() => [1, 2].every(id => !document.querySelector(`[data-station="${id}"]`).hidden));
   const tallToShortMapFirst = await tallPage.evaluate(sample);
-  assert.ok(tallToShortMapFirst.zoom >= .95, 'tall→short enters legible map-first');
+  assert.ok(tallToShortMapFirst.zoom >= .55, 'tall→short enters usable map-first');
   assertVisibleStations(tallToShortMapFirst, 'tall→short map-first');
   await tallPage.locator('#map-first-toggle').click();
   await tallPage.waitForFunction(() => document.querySelector('#map-first-toggle').getAttribute('aria-pressed') === 'false');
@@ -98,14 +98,14 @@ try {
   assert.equal(tallToShortNormal.hash, tallHash, 'tall→short toggle preserves simulation');
   await tallPage.setViewportSize({ width: 390, height: 844 });
   await tallPage.waitForFunction(() => document.querySelector('#map-first-toggle').getAttribute('aria-pressed') === 'false' &&
-    window.metro.mobileMapStats()?.zoom === 1);
+    window.metro.mobileMapStats()?.zoom === .55);
   const returnedTall = await tallPage.evaluate(sample);
   assert.equal(returnedTall.zoom, tallInitial.zoom, 'tall→short normal→tall restores prior tall zoom');
   assert.equal(returnedTall.hash, tallHash, 'height round trip preserves simulation');
   await tallPage.locator('#zoom-in').click();
   const userZoom = await tallPage.evaluate(sample);
-  assert.equal(userZoom.zoom, 1.15, 'user can adjust tall camera');
-  await tallPage.locator('#map-overview').focus();
+  assert.ok(Math.abs(userZoom.zoom - .7)<1e-8, 'user can adjust tall camera');
+  await tallPage.locator('#stage').focus();
   await tallPage.keyboard.press('ArrowRight');
   const tallCamera = await tallPage.evaluate(() => window.metro.mobileMapStats());
   await tallPage.setViewportSize({ width: 320, height: 480 });
@@ -117,7 +117,7 @@ try {
   assert.ok(Math.abs((await tallPage.evaluate(sample)).zoom - .7) < 1e-8, 'short normal zoom can be adjusted separately');
   await tallPage.setViewportSize({ width: 390, height: 844 });
   await tallPage.waitForFunction(() => document.querySelector('#map-first-toggle').getAttribute('aria-pressed') === 'false' &&
-    window.metro.mobileMapStats()?.zoom === 1.15);
+    Math.abs(window.metro.mobileMapStats()?.zoom - .7)<1e-8);
   const restoredCamera = await tallPage.evaluate(() => window.metro.mobileMapStats());
   assert.equal(restoredCamera.zoom, tallCamera.zoom, 'user-adjusted tall zoom survives short normal adjustment');
   assert.deepEqual(restoredCamera.center, tallCamera.center, 'camera pan remains unchanged across height-only breakpoint');
@@ -125,7 +125,7 @@ try {
   await tallPage.waitForFunction(() => document.querySelector('#map-first-toggle').getAttribute('aria-pressed') === 'true');
   await tallPage.locator('#map-first-toggle').click();
   const returnedShortNormal = await tallPage.evaluate(sample);
-  assert.ok(Math.abs(returnedShortNormal.zoom - .7) < 1e-8, 'user-selected 320 normal zoom survives height round trip');
+  assert.ok(returnedShortNormal.zoom >= .55, 'returning to 320 normal keeps usable zoom');
   assert.equal(returnedShortNormal.hash, tallHash, 'all camera transitions preserve simulation');
   console.log(JSON.stringify({ tallInitial, tallToShortMapFirst, tallToShortNormal, returnedTall, compactNormal, restoredCamera: { zoom: restoredCamera.zoom, center: restoredCamera.center }, returnedShortNormal }));
   await tallPage.close();

@@ -44,12 +44,16 @@ try {
         const hit = document.elementFromPoint(station.x, station.y);
         const stats = window.metro.mobileMapStats();
         const radius = 3 * stats.zoom;
-        const glyphs = stats.visiblePositions.filter(p => p.x + radius > 0 && p.x - radius < stage.width && p.y + radius > 0 && p.y - radius < stage.height)
+        const painted = [
+          ...stats.visiblePositions,
+          ...stats.queueGroups.flatMap(owner => owner.groups.filter(g => g.visible).map(g => ({ ...g, id: `${owner.stationId}:${g.shape}` }))),
+        ];
+        const glyphs = painted.filter(p => p.x + radius > 0 && p.x - radius < stage.width && p.y + radius > 0 && p.y - radius < stage.height)
           .map(p => ({ id: p.id, left: Math.max(stage.left, stage.left + p.x - radius),
             right: Math.min(stage.right, stage.left + p.x + radius), top: Math.max(stage.top, stage.top + p.y - radius),
             bottom: Math.min(stage.bottom, stage.top + p.y + radius) }));
         const list = document.querySelector('.train-group-list');
-        const controls = ['#line-chooser', '#map-overview', '.map-tools button', '#train-detail-close']
+        const controls = ['#line-chooser', '.map-tools button', '#train-detail-close']
           .map(s => document.querySelector(s)).filter(Boolean).map(el => ({ id: el.id || el.className, box: rect(el) }));
         return { stage, detail, station, hit: { tag: hit?.tagName, id: hit?.id, station: hit?.closest('[data-station]')?.dataset.station },
           glyphs, list: list ? { box: rect(list), scrollHeight: list.scrollHeight, clientHeight: list.clientHeight } : null,
@@ -68,12 +72,13 @@ try {
       assert.ok(!intersects(chooser.detail, chooser.stage), `${label}: opening line chooser cannot undo reserved train strip ${JSON.stringify(chooser)}`);
       await page.locator('#line-chooser').click();
       await page.screenshot({ path: `${out}/${label}-grouped.png` });
-      // Pan through the overview until station 2 is visibly in the drawable map;
+      // Pan with the focused map until station 2 is visibly in the drawable map;
       // the old overlay intercepted its real projected point while still inside #stage.
+      await page.locator('#stage').scrollIntoViewIfNeeded();
       for (let i = 0; i < 8; i++) {
         const current = await probe();
         if (current.station.y > current.stage.top + 20 && current.station.y < current.stage.bottom - 18) break;
-        await page.locator('#map-overview').focus();
+        await page.locator('#stage').focus();
         await page.keyboard.press(current.station.y <= current.stage.top + 20 ? 'ArrowUp' : 'ArrowDown');
       }
       const focused = await probe();
@@ -83,7 +88,23 @@ try {
       assert.ok(!intersects(focused.detail, focused.stage), `${label}: detail remains outside map after pan`);
       assert.notEqual(focused.hit.id, 'train-detail-close', `${label}: station 2 must not hit detail close button`);
       await page.screenshot({ path: `${out}/${label}-station-tap.png` });
-      await page.touchscreen.tap(focused.station.x, focused.station.y);
+      await page.waitForTimeout(100);
+      await page.locator('#stage').scrollIntoViewIfNeeded();
+      let freshStation = await page.evaluate(() => window.metro.projectStation(2));
+      for (let i=0;i<14;i++) {
+        await page.locator('#stage').scrollIntoViewIfNeeded();
+        const r=await page.locator('#stage').boundingBox();
+        if (freshStation.y>=Math.max(r.y+24,24) && freshStation.y<=Math.min(r.y+r.height-24,height-24)) break;
+        await page.locator('#stage').focus();
+        await page.keyboard.press(freshStation.y<Math.max(r.y+24,24)?'ArrowDown':'ArrowUp');
+        freshStation=await page.evaluate(() => window.metro.projectStation(2));
+      }
+      const hitAtStation = await page.evaluate(p => {
+        const node=document.elementFromPoint(p.x,p.y);
+        return {id:node?.id,station:node?.closest('[data-station]')?.dataset.station,cls:node?.className};
+      },freshStation);
+      assert.equal(hitAtStation.station,'2',`${label}: projected station is natively hit-testable ${JSON.stringify({hitAtStation,freshStation})}`);
+      await page.touchscreen.tap(freshStation.x, freshStation.y);
       assert.ok(await page.locator('#station-peek').isVisible(), `${label}: one native tap on station 2 opens station peek`);
       assert.match(await page.locator('#station-peek').innerText(), /车站 2 · 候车/);
       assert.equal(await page.locator('#train-detail').isVisible(), false, `${label}: station replaces train panel`);
@@ -107,18 +128,11 @@ try {
       const movingId = await denseTrain.getAttribute('data-train-id');
       await page.evaluate(id => document.querySelector(`[data-train-id="${id}"]`).click(), movingId);
       assert.ok(await page.locator('#train-detail').isVisible(), `${label}: moving train detail opens`);
-      // The alert focuses an exhausted crowd; use the overview to bring a
-      // queued station into frame while retaining the selected train panel.
-      for (let attempt = 0; attempt < 12 && !(await page.evaluate(() => window.metro.mobileMapStats().visiblePositions.length)); attempt++) {
-        const shift = await page.evaluate(() => {
-          const stage=document.querySelector('#stage').getBoundingClientRect();
-          const station=window.metro.getState().stations.filter(s=>s.queue.length).sort((a,b)=>b.queue.length-a.queue.length)[0];
-          const p=window.metro.projectStation(station.id);
-          return {x:p.x-stage.left-stage.width/2,y:p.y-stage.top-stage.height/2};
-        });
-        await page.locator('#map-overview').focus();
-        await page.keyboard.press(Math.abs(shift.x)>Math.abs(shift.y) ? shift.x>0?'ArrowLeft':'ArrowRight' : shift.y>0?'ArrowUp':'ArrowDown');
-      }
+      // Explicitly focus the dense owner's real queue through the native dialog.
+      // This preserves the open train panel and paints grouped WebGL glyphs.
+      await page.locator('#queue-browser-toggle').click();
+      await page.locator('[data-queue-station="1"]').click();
+      await page.locator('#queue-focus-pile').click();
       await page.waitForTimeout(120);
       const populated = await probe();
       assert.ok(populated.glyphs.length > 0, `${label}: at least one real painted passenger visible ${JSON.stringify({stage:populated.stage,detail:populated.detail,station:populated.station})}`);

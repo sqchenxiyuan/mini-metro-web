@@ -17,8 +17,7 @@ try {
   const open=page.locator('#queue-browser-toggle');
   const bounds=await open.boundingBox();
   assert.ok(bounds&&bounds.width>=44&&bounds.height>=44,'native browser opener is at least 44x44');
-  const overview=await page.locator('#map-overview').boundingBox();
-  assert.ok(overview&&(bounds.x>=overview.x+overview.width||overview.x>=bounds.x+bounds.width||bounds.y>=overview.y+overview.height||overview.y>=bounds.y+bounds.height),'queue browser button must not cover the overview');
+  assert.equal(await page.locator('#map-overview').count(),0,'queue browser works without a minimap');
   for(const selector of ['#zoom-out','#zoom-reset','#zoom-in']) {
    const b=await page.locator(selector).boundingBox();
    assert.ok(b&&(bounds.x>=b.x+b.width||b.x>=bounds.x+bounds.width||bounds.y>=b.y+b.height||b.y>=bounds.y+bounds.height),'queue browser button must not cover map zoom controls');

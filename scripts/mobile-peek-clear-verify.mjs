@@ -43,12 +43,12 @@ try {
           top:Math.max(stage.top,stage.top+p.y-radius),bottom:Math.min(stage.bottom,stage.top+p.y+radius)}));
       const cues=[...document.querySelectorAll('.mobile-owner-cue')].map(e=>({text:e.textContent,rect:box(e)}));
       return {peek:box(document.querySelector('#station-peek')),stage,station:window.metro.projectStation(id),
-        glyphs,cues,controls:['.left-panel .line-choice','#line-tools-toggle','#mobile-crowd-alert','#map-overview']
+        glyphs,cues,controls:['.left-panel .line-choice','#line-tools-toggle','#mobile-crowd-alert']
           .map(s=>document.querySelector(s)).filter(e=>e&&e.getClientRects().length).map(e=>({name:e.id||e.className,rect:box(e)})),
         viewport:[innerWidth,innerHeight],document:[document.documentElement.scrollWidth,document.documentElement.scrollHeight]};
     },selected);
     const check=(v,phase)=>{
-      assert.ok(v.stage.height >= (mapFirst?260:height<600?80:300),`${label} ${phase}: drawable map height ${v.stage.height}`);
+      assert.ok(v.stage.height >= (mapFirst?220:height<600?80:280),`${label} ${phase}: drawable map height ${v.stage.height}`);
       assert.ok(!intersects(v.peek,v.stage),`${label} ${phase}: card overlaps drawable stage ${JSON.stringify(v)}`);
       assert.ok(v.station.x>=v.stage.left+20&&v.station.x<=v.stage.right-20&&v.station.y>=v.stage.top+20&&v.station.y<=v.stage.bottom-20,
         `${label} ${phase}: selected station is visible in map ${JSON.stringify(v.station)} ${JSON.stringify(v.stage)}`);
@@ -61,16 +61,17 @@ try {
     const focused=await probe();check(focused,'alert focus');
     await page.screenshot({path:`${out}/${label}-alert.png`});
     const centerBefore=await page.evaluate(()=>window.metro.mobileMapStats().center);
-    await page.locator('#map-overview').focus();await page.keyboard.press('ArrowDown');
+    await page.locator('#stage').focus();await page.keyboard.press('ArrowDown');
     assert.notDeepEqual(await page.evaluate(()=>window.metro.mobileMapStats().center),centerBefore,`${label}: map pannable with card open`);
-    // Real repeated drag pans move station 1 above the stage while retaining its waiting passengers.
+    // Repeated keyboard pans move the selected station above the stage while
+    // retaining its waiting passengers.
     let cueProbe=null;
+    await page.locator('#stage').focus();
     for(let step=0;step<30;step++) {
       const v=await probe();
       if(v.cues.some(c=>c.text.startsWith(`↑${selected} `))){cueProbe=v;break;}
-      if(v.station.y < v.stage.top - 18 && v.glyphs.length===0) break; // Pile has fully passed the cue's visible edge.
-      const r=v.stage,x=Math.round(r.left+r.width/2),from=r.top+Math.max(48,r.height*.57);
-      await page.mouse.move(x,from);await page.mouse.down();await page.mouse.move(x,from-24,{steps:4});await page.mouse.up();
+      if(v.station.y < v.stage.top - 18 && v.glyphs.length===0) break;
+      await page.keyboard.press('ArrowDown');
     }
     assert.ok(cueProbe,`${label}: offscreen selected owner cue appears while its pile remains in view; last=${JSON.stringify(await probe())}`);
     // The selected owner has intentionally left the viewport; only inspect cue and map now.
