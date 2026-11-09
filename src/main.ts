@@ -7,7 +7,7 @@ import { hitTestVisibleLane, MetroRenderer } from './renderer';
 import { layoutSceneCues } from './overlay-layout';
 import { creativeStationPicker } from './station-picker';
 import { Mobile3DRenderer } from './mobile-3d';
-import { breakLoopEdge, extensionStops, safeLoopRelease } from './route-gestures';
+import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease } from './route-gestures';
 import { MetroAudio } from './audio';
 import { observeState } from './session';
 import {
@@ -21,6 +21,7 @@ import {
   copy,
   hash,
   stationCapacity,
+  trackPoints,
   trackPosition,
   tunnelsUsed,
 } from './rules';
@@ -202,16 +203,9 @@ function resetView(): void {
   delete $('train-detail').dataset.groupStation;
   delete $('train-detail').dataset.groupKey;
   trainLayer.replaceChildren();
-  draft = null;
-  gestureLine = null;
-  gestureKind = null;
-  gesturePointer = null;
-  handleLayer.querySelector('[data-loop-tip]')?.remove();
-  handleLayer.querySelector('[data-route-tip]')?.remove();
+  clearGesture();
   panning = null;
-  insertAt = null;
   decisionPage = 0;
-  renderer.clearPreview();
   renderer.resetCamera();
   // On the narrow map the 1x opening frame pins both endpoint stations to
   // opposite stage corners, leaving no room for a full 44px route control.
@@ -406,8 +400,34 @@ function preview(): void {
   if (!draft) return;
   const s = controller.getState();
   const lineId = gestureLine ?? controller.selectedLine;
-  const valid = draft.length < 2 ||
+  const valid = draft.length === 1 ? s.mode !== 'extreme' :
     applyAction(copy(s), { type: 'route', line: lineId, stops: draft, loop: draftLoop }).ok;
+  // The renderer's preview is additive: mark rails proposed for removal in the
+  // gesture layer so the player can see what will disappear before releasing.
+  handleLayer.querySelectorAll('[data-route-retract]').forEach(node => node.remove());
+  if (gestureKind === 'endpoint') {
+    const painted = renderer instanceof Mobile3DRenderer ? renderer.getPaintedTrackLayout() : null;
+    for (const [fromId, toId] of removedRouteEdges(originalStops, draft)) {
+      const edge = painted?.segments.find(item => item.from === Math.min(fromId, toId) && item.to === Math.max(fromId, toId));
+      const a = s.stations.find(p => p.id === fromId)!;
+      const b = s.stations.find(p => p.id === toId)!;
+      const points = edge?.points ?? trackPoints(a, b);
+      const project = edge && renderer instanceof Mobile3DRenderer
+        ? renderer.projectTrackPoint.bind(renderer) : renderer.project.bind(renderer);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      path.setAttribute('data-route-retract', '');
+      path.setAttribute('points', points.map(p => {
+        const q = project(p.x, p.y, 0.6);
+        return `${q.x},${q.y}`;
+      }).join(' '));
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', valid ? '#e75c58' : '#8d8a88');
+      path.setAttribute('stroke-width', '5'); path.setAttribute('stroke-dasharray', '5 5');
+      path.setAttribute('opacity', '.8');
+      handleLayer.append(path);
+    }
+  }
+  // A one-stop draft means the last segment will clear the line on release.
   renderer.showPreview(s, draftLoop ? [...draft, draft[0]] : draft, lineId, valid);
 }
 let panning: { x: number; y: number } | null = null;
@@ -418,7 +438,7 @@ let insertAt: number | null = null,
 let gestureLine: number | null = null;
 let gestureKind: 'body' | 'endpoint' | 'insert' | 'loop' | null = null;
 let endpointSide: 'start' | 'end' = 'end';
-let additions: number[] = [];
+let endpointVisited: number | null = null;
 let loopEdge: number | null = null;
 let gesturePointer: number | null = null;
 let loopPoint = { x: 0, y: 0 };
@@ -553,6 +573,7 @@ function paintHandles(): void {
   const rect = stage.getBoundingClientRect();
   const draggedTip = handleLayer.querySelector('[data-loop-tip]');
   const routeTip = handleLayer.querySelector('[data-route-tip]');
+  const retractRails = [...handleLayer.querySelectorAll('[data-route-retract]')];
   handleLayer.replaceChildren();
   const visible = new Set<string>();
   handlePositions.clear();
@@ -635,13 +656,15 @@ function paintHandles(): void {
     if (armedEndpoint && `${armedEndpoint.line}-${armedEndpoint.side}` === key &&
         !controller.getState().lines[armedEndpoint.line]?.stops.length) armedEndpoint = null;
   }
+  for (const rail of retractRails) handleLayer.append(rail);
   if (draggedTip) handleLayer.append(draggedTip);
   if (routeTip) handleLayer.append(routeTip);
 }
 function clearGesture(): void {
   draft = null; insertAt = null; pointerStation = null; gestureLine = null;
-  gestureKind = null; loopEdge = null; additions = []; gesturePointer = null;
+  gestureKind = null; loopEdge = null; endpointVisited = null; gesturePointer = null;
   renderer.clearPreview();
+  handleLayer.querySelectorAll('[data-route-retract]').forEach(node => node.remove());
   handleLayer.querySelector('[data-loop-tip]')?.remove();
   handleLayer.querySelector('[data-route-tip]')?.remove();
 }
@@ -687,7 +710,8 @@ stage.addEventListener('pointerdown', (e) => {
     gesturePointer = e.pointerId;
     gestureKind = 'endpoint'; gestureLine = handle.line; endpointSide = handle.side;
     originalStops = [...controller.getState().lines[handle.line].stops];
-    additions = []; draft = [...originalStops]; draftLoop = false;
+    draft = [...originalStops]; draftLoop = false;
+    endpointVisited = handle.side === 'start' ? originalStops[0] : originalStops.at(-1)!;
     pointerStation = null; insertAt = null; moved = false;
     dragStart = { x: e.clientX, y: e.clientY };
     $('station-peek').hidden = true;
@@ -795,25 +819,21 @@ stage.addEventListener('pointermove', (e) => {
   const id = nearest(e.clientX, e.clientY);
   if (gestureKind === 'endpoint') {
     if (id === null) {
-      if (draftLoop) { draftLoop = false; preview(); }
+      if (draftLoop) { draftLoop = false; endpointVisited = null; preview(); }
       drawRouteTip(e); return;
     }
-    if (id === originalStops[endpointSide === 'start' ? 0 : originalStops.length - 1] && additions.length) {
-      additions = []; draft = [...originalStops]; draftLoop = false; renderer.clearPreview(); drawRouteTip(e); return;
+    // Remain latched to the last visited station through blank space when
+    // backtracking, but allow a disarmed loop closure to re-arm on re-entry.
+    if (id === endpointVisited) { drawRouteTip(e); return; }
+    endpointVisited = id;
+    if (draftLoop) { draftLoop = false; preview(); }
+    const next = endpointStep(originalStops, endpointSide, draft, id);
+    if (next) {
+      draft = next.stops;
+      draftLoop = next.loop;
+      preview();
     }
-    if (id === additions.at(-1)) {
-      if (draftLoop) { draftLoop = false; preview(); }
-      drawRouteTip(e); return;
-    }
-    if (id === originalStops[endpointSide === 'start' ? originalStops.length - 1 : 0] &&
-        originalStops.length + additions.length >= 3) {
-      draft = extensionStops(originalStops, endpointSide, additions) ?? [...originalStops];
-      draftLoop = true; preview(); drawRouteTip(e); return;
-    }
-    if (id === additions.at(-2)) additions.pop();
-    else if (!originalStops.includes(id) && !additions.includes(id)) additions.push(id);
-    draft = extensionStops(originalStops, endpointSide, additions) ?? [...originalStops];
-    draftLoop = false; preview(); drawRouteTip(e);
+    drawRouteTip(e);
     return;
   }
   if (id === null || id === draft.at(-1)) {
@@ -895,13 +915,15 @@ function finishDraw(e: PointerEvent): void {
       const stops = breakLoopEdge(originalStops, loopEdge);
       if (stops) act({ type: 'route', line: gestureLine, stops, loop: false }, '拉开环线轨道。');
     }
-  } else if (draft && moved && draft.length >= 2 && gestureLine !== null &&
-      (gestureKind !== 'endpoint' || additions.length || draftLoop) &&
+  } else if (draft && moved && gestureLine !== null &&
+      (gestureKind === 'endpoint' ?
+        (draft.length !== originalStops.length || draft.some((id, i) => id !== originalStops[i]) || draftLoop) : draft.length >= 2) &&
       !(gestureKind === 'endpoint' && draftLoop && controller.getState().mode === 'extreme' && originalStops.length) &&
       (gestureKind !== 'insert' || draft.length > originalStops.length) &&
       (gestureKind !== 'body' || draft.length > 1)) {
     const first = !controller.getState().lines.some(l => l.stops.length);
-    if (act({ type: 'route', line: gestureLine, stops: draft, loop: draftLoop },
+    const stops = gestureKind === 'endpoint' && draft.length < 2 ? [] : draft;
+    if (act({ type: 'route', line: gestureLine, stops, loop: draftLoop },
       gestureKind === 'insert' ? '拖动轨道接入新车站。' : '拖拽车站绘制线路。')) {
       redrawing = false;
       if (first) controller.setPaused(false);

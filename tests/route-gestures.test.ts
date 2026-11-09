@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breakLoopEdge, extensionStops, safeLoopRelease } from '../src/route-gestures';
+import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease } from '../src/route-gestures';
 import { advance, applyAction, createState, hash } from '../src/rules';
 import type { State } from '../src/types';
 
@@ -14,6 +14,52 @@ describe('route gesture decisions', () => {
     expect(extensionStops(stops, 'start', [4, 5])).toEqual([5, 4, 1, 2, 3]);
     expect(extensionStops(stops, 'end', [4, 5])).toEqual([1, 2, 3, 4, 5]);
     expect(extensionStops(stops, 'start', [2])).toBeNull();
+  });
+  it('diffs withdrawn rail edges even when a route is replaced at the same length', () => {
+    expect(removedRouteEdges([1, 2, 3], [1, 2, 4])).toEqual([[2, 3]]);
+    expect(removedRouteEdges([1, 2, 3], [1, 2])).toEqual([[2, 3]]);
+    expect(removedRouteEdges([1, 2, 3], [1])).toEqual([[1, 2], [2, 3]]);
+    expect(removedRouteEdges([1, 2, 3], [1, 2, 3])).toEqual([]);
+    expect(removedRouteEdges([1, 2, 3], [4, 1, 2, 3])).toEqual([]);
+  });
+  it('retracts only the adjacent prior stop from either endpoint, then allows re-extension', () => {
+    expect(endpointStep([1, 2, 3, 4], 'end', [1, 2, 3, 4], 3)).toEqual({ stops: [1, 2, 3], loop: false });
+    expect(endpointStep([1, 2, 3, 4], 'end', [1, 2, 3], 2)).toEqual({ stops: [1, 2], loop: false });
+    expect(endpointStep([1, 2, 3, 4], 'start', [1, 2, 3, 4], 2)).toEqual({ stops: [2, 3, 4], loop: false });
+    expect(endpointStep([1, 2, 3, 4], 'start', [2, 3, 4], 3)).toEqual({ stops: [3, 4], loop: false });
+    expect(endpointStep([1, 2, 3, 4], 'end', [1, 2], 3)).toEqual({ stops: [1, 2, 3], loop: false });
+  });
+  it('retains a one-stop preview so reversing toward the prior endpoint can restore the line before release', () => {
+    expect(endpointStep([1, 2, 3], 'end', [1, 2], 1)).toEqual({ stops: [1], loop: false });
+    expect(endpointStep([1, 2, 3], 'start', [2, 3], 3)).toEqual({ stops: [3], loop: false });
+    expect(endpointStep([1, 2, 3], 'end', [1], 2)).toEqual({ stops: [1, 2], loop: false });
+  });
+  it('preserves extension, one-step undo, and closure after visiting outside stations', () => {
+    expect(endpointStep(stops, 'end', stops, 4)).toEqual({ stops: [1, 2, 3, 4], loop: false });
+    expect(endpointStep(stops, 'end', [1, 2, 3, 4], 3)).toEqual({ stops: [1, 2, 3], loop: false });
+    expect(endpointStep(stops, 'start', [4, 1, 2, 3], 1)).toEqual({ stops: [1, 2, 3], loop: false });
+    expect(endpointStep(stops, 'end', stops, 1)).toEqual({ stops, loop: true });
+    expect(endpointStep(stops, 'end', [1, 2], 3)).toEqual({ stops, loop: false });
+    expect(endpointStep([1, 2, 3, 4], 'end', [1, 2, 3, 4], 2)).toBeNull();
+    expect(endpointStep([1, 2, 3, 4], 'start', [1, 2, 3, 4], 3)).toBeNull();
+  });
+  it('clears the last segment through the route rule, retiring trains without losing riders', () => {
+    const s = createState({ seed: 420, mode: 'normal' });
+    s.nextStation = 1e8;
+    for (const station of s.stations) station.nextPassenger = 1e8;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2] }).ok).toBe(true);
+    const train = s.trains[0];
+    train.from = 1; train.to = 2; train.progress = 0.5;
+    train.passengers.push({ id: s.nextId++, shape: 'triangle', born: 0, transfers: 0 });
+    s.totalSpawned = 1;
+    // One-station drafts cannot be submitted; the existing clear action is the only valid final edit.
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1] }).ok).toBe(false);
+    expect(applyAction(s, { type: 'route', line: 0, stops: [] }).ok).toBe(true);
+    expect(train.retiring).toBe(true);
+    for (let i = 0; i < 500 && s.trains.length; i++) advance(s);
+    expect(s.trains).toHaveLength(0);
+    expect(s.resources.locomotives).toBe(3);
+    expect(population(s)).toBe(s.totalSpawned);
   });
   it('opens the chosen closing edge without rotating stations', () => {
     expect(breakLoopEdge(stops, 3)).toEqual(stops);

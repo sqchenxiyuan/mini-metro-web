@@ -189,8 +189,9 @@ try {
       await drag.up(); await drag.close();
       const line = (await state(page)).lines[0];
       assert.equal(line.loop, false, `${width} ${kind}: leaving closing station for ${destination} must not commit a loop`);
-      assert.deepEqual(line.stops, destination === 'interior' && kind === 'body' ? [1, 2] : [1, 2, 3]);
-      if (kind === 'endpoint') assert.equal(await hash(page), before, 'rejected endpoint hover cannot mutate state');
+      assert.deepEqual(line.stops, destination === 'interior' ? [1, 2] : [1, 2, 3]);
+      if (kind === 'endpoint' && destination !== 'interior')
+        assert.equal(await hash(page), before, 'rejected endpoint hover cannot mutate state');
       assert.equal(await page.locator('[data-route-tip]').count(), 0);
     }
     // Pointer cancel must remove the same visual, without submitting a route.

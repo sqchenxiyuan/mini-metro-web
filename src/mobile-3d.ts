@@ -364,6 +364,8 @@ export class Mobile3DRenderer {
   /** Ground-plane picks are for creative placement away from the projected station roofs. */
   unprojectGround(x:number,y:number){const p=this.scene.unproject(x,y);return p?{x:p.x*70/60,y:this.inverseY(p.y*70)}:null;}
   projectTrain(id:number){return this.scene.projectTrain(id);}
+  getPaintedTrackLayout() { return this.scene.getPaintedTrackLayout(); }
+  projectTrackPoint(x:number,y:number,height=.6) { return this.scene.project(x,y,height); }
   hitTestLane(s:State,line:number,point:{x:number;y:number},radius=12){
     const layout = this.scene.getPaintedTrackLayout();
     return layout ? hitTestVisibleLane(s,line,point,this.scene.project.bind(this.scene),radius,layout) : null;
