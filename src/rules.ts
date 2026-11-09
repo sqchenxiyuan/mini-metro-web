@@ -207,7 +207,7 @@ export function createState(options: Options = {}): State {
   )
     throw new Error('非法开局参数');
   const s: State = {
-    version: 'orchard-metro.rules.6',
+    version: 'orchard-metro.rules.7',
     seed,
     rng: seed || 1,
     tick: 0,
@@ -692,12 +692,23 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
       const d = Math.max(0.1, trackLength(station(s, t.from), station(s, t.to)));
       t.progress = Math.min(1, t.progress + RULES.speed / RULES.hz / d);
       if (t.progress < 1) continue;
+      const previous = t.from;
       t.from = t.to;
       t.to = null;
       t.progress = 0;
       t.dwell = 0;
       t.serviceTicks = 0;
       emit?.('arrive', t);
+      // The old endpoint is still a real station. Clear its riders there, then
+      // traverse the deleted hop back to a stop that still belongs to this line.
+      if (!t.retiring && !t.moveTo && !s.lines[t.line]?.stops.includes(t.from) &&
+          s.lines[t.line]?.stops.includes(previous)) {
+        unload(s, t, emit);
+        t.direction = t.direction === 1 ? -1 : 1;
+        t.to = previous;
+        emit?.('depart', t);
+        continue;
+      }
     }
     if (t.retiring) {
       unload(s, t, emit);
@@ -727,7 +738,8 @@ export function advance(s: State, observer?: ServiceObserver): boolean {
       continue;
     }
     if (!l.stops.includes(t.from)) {
-      // Finish old hop, unload at the removed station, then recover the empty train.
+      // A removed stop with no surviving adjacent origin has no safe return hop.
+      // Recover at that station (also covers further route edits mid-return).
       unload(s, t, emit);
       s.resources.locomotives++;
       s.resources.carriages += t.carriages;

@@ -38,6 +38,12 @@ function population(s: State): number {
 }
 
 describe('transport rules', () => {
+  it('rejects previous-version replays after endpoint return semantics change', () => {
+    const session = new Session({ seed: 42 });
+    expect(session.getState().version).toBe('orchard-metro.rules.7');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v7');
+    expect(() => new ReplayPlayer({ ...session.exportReplay(), format: 'orchard-metro.replay.v6' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
+  });
   it('runs at 50 ticks per real second while preserving day, week, crowd and speed durations', () => {
     expect(RULES.hz).toBe(50);
     expect(RULES.dayTicks / RULES.hz).toBe(12);
@@ -59,14 +65,14 @@ describe('transport rules', () => {
   });
   it('uses a new replay/rules version when tick cadence changes', () => {
     const s = new Session({ seed: 42 });
-    expect(s.getState().version).toBe('orchard-metro.rules.6');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v6');
+    expect(s.getState().version).toBe('orchard-metro.rules.7');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v7');
     expect(() => new ReplayPlayer({ ...s.exportReplay(), format: 'orchard-metro.replay.v3' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('versions the destination weighting change in rules and replays', () => {
     const session = new Session({ seed: 42 });
-    expect(session.getState().version).toBe('orchard-metro.rules.6');
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v6');
+    expect(session.getState().version).toBe('orchard-metro.rules.7');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v7');
     expect(() => new ReplayPlayer({ ...session.exportReplay(), format: 'orchard-metro.replay.v4' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('never chooses the origin shape when no matching destination exists', () => {
@@ -258,6 +264,138 @@ describe('transport rules', () => {
     ticks(s, 875);
     expect([1, -1]).toContain(s.trains[0].direction);
   });
+  it('returns a train from a removed endpoint along the deleted edge before resuming its retained line', () => {
+    const s = quiet();
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2, 3] }).ok).toBe(true);
+    const t = s.trains[0];
+    t.from = 2; t.to = 3; t.progress = 0.5; t.direction = 1; t.dwell = 0;
+    const id = t.id;
+    const events: import('../src/types').ServiceEvent[] = [];
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2] }).ok).toBe(true);
+    expect(t.to).toBe(3);
+    for (let i = 0; i < 500 && t.from !== 3; i++) advance(s, event => events.push(event));
+    expect(events.slice(-2).map(event => [event.type, event.stationId])).toEqual([['arrive', 3], ['depart', 3]]);
+    expect(s.trains.map(train => train.id)).toContain(id);
+    expect(t.from).toBe(3);
+    expect(t.to).toBe(2);
+    expect(t.progress).toBe(0);
+    advance(s);
+    expect(t.progress).toBeGreaterThan(0);
+    for (let i = 0; i < 500 && t.from !== 2; i++) advance(s);
+    expect(s.trains.map(train => train.id)).toContain(id);
+    expect(t.from).toBe(2);
+    expect(s.lines[0].stops).toEqual([1, 2]);
+    for (let i = 0; i < 500 && t.to !== 1; i++) advance(s);
+    expect(t.to).toBe(1);
+    expect(s.resources.locomotives).toBe(2);
+  });
+  it('retains a deleted edge until the last of two trains clears it', () => {
+    const s = quiet();
+    expect(applyAction(s, { type: 'route', line: 0, stops: [2, 1, 3] }).ok).toBe(true);
+    const first = s.trains[0];
+    first.from = 1; first.to = 3; first.progress = 0.75; first.dwell = 0;
+    expect(applyAction(s, { type: 'addTrain', line: 0, station: 1 }).ok).toBe(true);
+    const second = s.trains[1];
+    second.from = 1; second.to = 3; second.progress = 0.2;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [2, 1] }).ok).toBe(true);
+    expect(tunnelsUsed(s)).toBe(1);
+    for (let i = 0; i < 500 && !(first.from === 1 && first.progress === 0 && first.to === null); i++) advance(s);
+    // The first train reached the removed endpoint and traversed back while
+    // the later train still occupies the same deleted rail.
+    expect(first.from).toBe(1);
+    expect(first.to).toBeNull();
+    expect(second.to).not.toBeNull();
+    expect(tunnelsUsed(s)).toBe(1);
+    for (let i = 0; i < 500 && second.from !== 1; i++) advance(s);
+    expect(s.trains).toHaveLength(2);
+    expect(tunnelsUsed(s)).toBe(0);
+  });
+  it('keeps a removed tunnel reserved through the return and releases it when the last train clears', () => {
+    const s = quiet();
+    expect(applyAction(s, { type: 'route', line: 0, stops: [2, 1, 3] }).ok).toBe(true);
+    const t = s.trains[0];
+    t.from = 1; t.to = 3; t.progress = 0.5; t.direction = 1; t.dwell = 0;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [2, 1] }).ok).toBe(true);
+    expect(tunnelsUsed(s)).toBe(1);
+    for (let i = 0; i < 500 && t.from !== 3; i++) advance(s);
+    expect(t.to).toBe(1);
+    expect(tunnelsUsed(s)).toBe(1);
+    for (let i = 0; i < 500 && t.from !== 1; i++) advance(s);
+    expect(t.from).toBe(1);
+    expect(tunnelsUsed(s)).toBe(0);
+  });
+  it('unloads passengers at the removed station without retiring the returning train', () => {
+    const s = quiet();
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2, 3] }).ok).toBe(true);
+    const t = s.trains[0], target = station(s, 3);
+    t.from = 2; t.to = 3; t.progress = 0.95; t.passengers = [passenger(s, target.shape), passenger(s, 'triangle')];
+    s.totalSpawned = 2;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2] }).ok).toBe(true);
+    for (let i = 0; i < 200 && t.from !== 3; i++) advance(s);
+    expect(s.score).toBe(1);
+    expect(target.queue).toHaveLength(1);
+    expect(target.queue[0].transfers).toBe(1);
+    expect(population(s)).toBe(2);
+    expect(t.passengers).toHaveLength(0);
+    expect(t.to).toBe(2);
+    expect(s.resources.locomotives).toBe(2);
+  });
+  it('replays a public-action endpoint retraction at the same mid-return hash', () => {
+    const session = new Session({ seed: 420, mode: 'creative' });
+    expect(session.submit({ action: { type: 'route', line: 0, stops: [1, 2, 3] } }).ok).toBe(true);
+    let train = session.getState().trains[0];
+    for (let i = 0; i < 700 && !(train.to === 3 && train.progress > 0.4); i++) {
+      session.step(1);
+      train = session.getState().trains[0];
+    }
+    expect(train.to).toBe(3);
+    expect(session.submit({ action: { type: 'route', line: 0, stops: [1, 2] } }).ok).toBe(true);
+    for (let i = 0; i < 500 && train.from !== 3; i++) {
+      session.step(1);
+      train = session.getState().trains[0];
+    }
+    expect(train.to).toBe(2);
+    session.step(45);
+    const returning = session.getState();
+    expect(returning.trains[0]).toMatchObject({ from: 3, to: 2 });
+    expect(returning.trains[0].progress).toBeGreaterThan(0);
+    const player = new ReplayPlayer(session.exportReplay());
+    expect(hash(player.seek(returning.tick))).toBe(hash(returning));
+    player.seek(0);
+    expect(hash(player.seek(returning.tick))).toBe(hash(returning));
+  });
+  it('refuses endpoint retraction in extreme mode without changing a moving train', () => {
+    const s = createState({ mode: 'extreme', seed: 42 });
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2, 3] }).ok).toBe(true);
+    const t = s.trains[0];
+    t.from = 2; t.to = 3; t.progress = 0.5;
+    const before = hash(s);
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2] }).ok).toBe(false);
+    expect(hash(s)).toBe(before);
+  });
+  it('retires a returning train only when its surviving line is subsequently deleted', () => {
+    const s = quiet();
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2, 3] }).ok).toBe(true);
+    const t = s.trains[0];
+    t.from = 2; t.to = 3; t.progress = 0.99;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 2] }).ok).toBe(true);
+    for (let i = 0; i < 200 && t.from !== 3; i++) advance(s);
+    expect(t.to).toBe(2);
+    expect(applyAction(s, { type: 'route', line: 0, stops: [] }).ok).toBe(true);
+    for (let i = 0; i < 400 && s.trains.length; i++) advance(s);
+    expect(s.trains).toHaveLength(0);
+    expect(s.resources.locomotives).toBe(3);
+  });
+  it('retires a train after arrival if its whole line was deleted', () => {
+    const s = quiet();
+    expect(applyAction(s, { type: 'route', line: 0, stops: [1, 3] }).ok).toBe(true);
+    const t = s.trains[0];
+    t.from = 1; t.to = 3; t.progress = 0.5;
+    expect(applyAction(s, { type: 'route', line: 0, stops: [] }).ok).toBe(true);
+    for (let i = 0; i < 400 && s.trains.length; i++) advance(s);
+    expect(s.trains).toHaveLength(0);
+    expect(s.resources.locomotives).toBe(3);
+  });
   it('keeps a deleted tunnel occupied until its moving train arrives and preserves passengers', () => {
     const s = quiet();
     applyAction(s, { type: 'route', line: 0, stops: [1, 3] });
@@ -351,14 +489,14 @@ describe('transport rules', () => {
   });
   it('rejects old rules-2 replays instead of silently applying changed transfer timing', () => {
     const session = new Session({ seed: 13 });
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v6');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v7');
     const old = { ...session.exportReplay(), format: 'orchard-metro.replay.v2' };
     expect(() => new ReplayPlayer(old as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('rejects an old rules-1 replay after the boarding rules change', () => {
     const s = new Session({ seed: 13 });
-    expect(s.getState().version).toBe('orchard-metro.rules.6');
-    expect(s.exportReplay().format).toBe('orchard-metro.replay.v6');
+    expect(s.getState().version).toBe('orchard-metro.rules.7');
+    expect(s.exportReplay().format).toBe('orchard-metro.replay.v7');
     const legacy = { ...s.exportReplay(), format: 'orchard-metro.replay.v1' };
     expect(() => new ReplayPlayer(legacy as unknown as import('../src/types').Replay)).toThrow();
   });

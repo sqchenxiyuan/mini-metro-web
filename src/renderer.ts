@@ -659,7 +659,7 @@ export class MetroRenderer {
     return {...source, segments: source.segments.map(edge => ({...edge,
       points: this.warpTrackPoints(edge.points)}))};
   }
-  /** The last painted rail layout, including warped canonical bends and shared-lane offsets. */
+  /** Last painted lanes, including temporary ghost lanes (not editable routes). */
   getPaintedTrackLayout(): Readonly<TrackLayout> | null {
     return this.trackLayout;
   }
@@ -805,14 +805,17 @@ export class MetroRenderer {
     layout: ReturnType<typeof deriveTrackLayout> | null, lineId: number,
     from: number, to: number, progress: number,
     a: Station, b: Station,
-  ): { x: number; y: number } {
+  ): { x: number; y: number; angle: number } {
     const edge = layout?.segments.find((item) =>
-      (item.from === from && item.to === to) || (item.from === to && item.to === from));
+      ((item.from === from && item.to === to) || (item.from === to && item.to === from)) &&
+      item.lanes.some(lane => lane.lineId === lineId));
     const lane = edge?.lanes.find((item) => item.lineId === lineId);
     if (!edge || !lane) return trackPosition(a, b, progress);
     const vertices = this.trackVertices(edge.points, lane.offset, 0.48,
       edge.laneEndpoints?.find((item) => item.lineId === lineId) ?? edge.endpointOffsets);
     if (vertices.length < 2) return trackPosition(a, b, progress);
+    // Sample along the lane's original bend; reversing uses these same
+    // vertices in opposite order, including their endpoint offsets.
     const lengths = edge.points.slice(1).map((point, index) =>
       Math.hypot(point.x - edge.points[index].x, point.y - edge.points[index].y));
     const total = lengths.reduce((sum, length) => sum + length, 0);
@@ -821,7 +824,10 @@ export class MetroRenderer {
       if (remaining <= lengths[i] || i === lengths.length - 1) {
         const t = lengths[i] ? Math.max(0, Math.min(1, remaining / lengths[i])) : 0;
         return { x: THREE.MathUtils.lerp(vertices[i].x, vertices[i + 1].x, t),
-          y: THREE.MathUtils.lerp(vertices[i].z, vertices[i + 1].z, t) };
+          y: THREE.MathUtils.lerp(vertices[i].z, vertices[i + 1].z, t),
+          angle: Math.atan2((from === edge.from ? 1 : -1) *
+            (vertices[i + 1].x - vertices[i].x), (from === edge.from ? 1 : -1) *
+            (vertices[i + 1].z - vertices[i].z)) };
       }
       remaining -= lengths[i];
     }
@@ -922,16 +928,19 @@ export class MetroRenderer {
       g.scale.setScalar(p.interchange ? 1.3 : 1);
       updateStationCrowd(g, p.shape, crowdFillFraction(p.crowd, s.mode));
     }
-    const ghost = s.trains.filter(
-      (t) =>
-        t.to !== null &&
-        !segments(s.lines[t.line]).some(
-          ([a, b]) => (a === t.from && b === t.to) || (b === t.from && a === t.to),
-        ),
-    );
+    const ghost = new Map<string, { line: number; from: number; to: number }>();
+    for (const t of s.trains) {
+      if (t.to === null || segments(s.lines[t.line]).some(
+        ([a, b]) => (a === t.from && b === t.to) || (b === t.from && a === t.to),
+      )) continue;
+      const from = Math.min(t.from, t.to), to = Math.max(t.from, t.to);
+      ghost.set(`${t.line}:${from}:${to}`, { line: t.line, from, to });
+    }
+    const ghostEdges = [...ghost.values()].sort((a, b) => a.line - b.line || a.from - b.from || a.to - b.to);
     const key = JSON.stringify([s.lines, s.stations.map((p) => [p.id, p.x, p.y]),
-      ghost.map((t) => [t.line, t.from, t.to]), selectedLine]);
+      ghostEdges, selectedLine]);
     if (key !== this.routeKey) {
+      const previousLayout = this.trackLayout;
       this.routeKey = key;
       disposeGroup(this.tracks);
       this.trackLayout = this.visualTrackLayout(s);
@@ -941,15 +950,27 @@ export class MetroRenderer {
           this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43,
             edge.laneEndpoints?.find((item) => item.lineId === lane.lineId) ?? edge.endpointOffsets);
       }
-      for (const t of ghost)
-        this.track(
-          station(s, t.from),
-          station(s, t.to!),
-          LINE_COLORS[t.line],
-          this.tracks,
-          0,
-          true,
-        );
+      for (const orphan of ghostEdges) {
+        // An orphan keeps its own original lane even if another line still
+        // paints this pair. Its bend always comes from canonical world points.
+        const old = previousLayout?.segments.find(edge => edge.from === orphan.from && edge.to === orphan.to &&
+          edge.lanes.some(lane => lane.lineId === orphan.line));
+        const oldLane = old?.lanes.find(lane => lane.lineId === orphan.line);
+        const source = this.trackSource && this.riverTransform ? this.trackSource : s;
+        const canonical = trackPoints(station(source, orphan.from), station(source, orphan.to));
+        const points = source === s ? canonical : this.warpTrackPoints(canonical);
+        const lane = { lineId: orphan.line, offset: oldLane?.offset ?? 0 };
+        const edge = { from: orphan.from, to: orphan.to, points, lanes: [lane],
+          ...(old?.laneEndpoints ? { laneEndpoints: old.laneEndpoints } : {}),
+          ...(old?.endpointOffsets ? { endpointOffsets: old.endpointOffsets } : {}),
+          underlayRadius: 0 };
+        this.trackLayout.segments.push(edge);
+        const vertices = this.trackVertices(edge.points, lane.offset, 0.31,
+          edge.laneEndpoints?.find(item => item.lineId === orphan.line) ?? edge.endpointOffsets);
+        for (let i = 1; i < vertices.length; i++)
+          this.trackPiece({ x: vertices[i - 1].x, y: vertices[i - 1].z },
+            { x: vertices[i].x, y: vertices[i].z }, LINE_COLORS[orphan.line], this.tracks, 0, true);
+      }
     }
     const trainIds = new Set(s.trains.map((t) => t.id));
     for (const [id, t] of this.trains)
@@ -996,10 +1017,10 @@ export class MetroRenderer {
         const near = this.lanePosition(this.trackLayout, t.line, previous.from, t.from, previous.progress, start, a);
         entry.group.position.set(THREE.MathUtils.lerp(near.x, a.x, alpha), 0.48,
           THREE.MathUtils.lerp(near.y, a.y, alpha));
-        if (alpha < 1) entry.group.rotation.y = trackPosition(start, a, previous.progress).angle;
+        if (alpha < 1) entry.group.rotation.y = near.angle;
       } else {
         entry.group.position.set(visible.x, 0.48, visible.y);
-        if (t.to !== null) entry.group.rotation.y = position.angle;
+        if (t.to !== null) entry.group.rotation.y = visible.angle;
       }
       entry.group.visible = true;
     }

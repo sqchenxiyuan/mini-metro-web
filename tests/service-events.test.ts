@@ -24,8 +24,8 @@ describe('per-tick passenger service events', () => {
   });
   it('versions the new service timing and rejects a previous-format replay', () => {
     const session = new Session({ seed: 9 });
-    expect(session.getState().version).toBe('orchard-metro.rules.6');
-    expect(session.exportReplay().format).toBe('orchard-metro.replay.v6');
+    expect(session.getState().version).toBe('orchard-metro.rules.7');
+    expect(session.exportReplay().format).toBe('orchard-metro.replay.v7');
     expect(() => new ReplayPlayer({ ...session.exportReplay(), format: 'orchard-metro.replay.v5' } as unknown as import('../src/types').Replay)).toThrow(/录像结构不合法/);
   });
   it('starts a relocated interchange stop with its first 0.15 second rider interval', () => {
