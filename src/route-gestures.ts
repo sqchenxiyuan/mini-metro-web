@@ -31,7 +31,8 @@ export function endpointStep(
 ): { stops: number[]; loop: boolean } | null {
   if (!current.length) return null;
   const endpoint = side === 'start' ? current[0] : current.at(-1)!;
-  if (id === endpoint) return null;
+  if (id === endpoint) return current.length > 1
+    ? { stops: side === 'start' ? current.slice(1) : current.slice(0, -1), loop: false } : null;
   const adjacent = side === 'start' ? current[1] : current.at(-2);
   if (id === adjacent) return { stops: side === 'start' ? current.slice(1) : current.slice(0, -1), loop: false };
   const originalIndex = original.indexOf(endpoint);

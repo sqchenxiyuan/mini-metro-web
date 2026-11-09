@@ -29,6 +29,16 @@ describe('route gesture decisions', () => {
     expect(endpointStep([1, 2, 3, 4], 'start', [2, 3, 4], 3)).toEqual({ stops: [3, 4], loop: false });
     expect(endpointStep([1, 2, 3, 4], 'end', [1, 2], 3)).toEqual({ stops: [1, 2, 3], loop: false });
   });
+  it('retracts the currently crossed endpoint and restores it on reversal', () => {
+    expect(endpointStep(stops, 'end', stops, 3)).toEqual({ stops: [1, 2], loop: false });
+    expect(endpointStep(stops, 'end', [1, 2], 2)).toEqual({ stops: [1], loop: false });
+    expect(endpointStep(stops, 'end', [1, 2], 3)).toEqual({ stops, loop: false });
+    expect(endpointStep(stops, 'end', [1], 3)).toBeNull(); // No skipping an unvisited intermediate stop.
+    expect(endpointStep(stops, 'start', stops, 1)).toEqual({ stops: [2, 3], loop: false });
+    expect(endpointStep(stops, 'start', [2, 3], 2)).toEqual({ stops: [3], loop: false });
+    expect(endpointStep(stops, 'start', [2, 3], 1)).toEqual({ stops, loop: false });
+    expect(endpointStep(stops, 'start', [3], 1)).toBeNull();
+  });
   it('retains a one-stop preview so reversing toward the prior endpoint can restore the line before release', () => {
     expect(endpointStep([1, 2, 3], 'end', [1, 2], 1)).toEqual({ stops: [1], loop: false });
     expect(endpointStep([1, 2, 3], 'start', [2, 3], 3)).toEqual({ stops: [3], loop: false });

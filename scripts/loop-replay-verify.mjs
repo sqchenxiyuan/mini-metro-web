@@ -57,7 +57,12 @@ async function mobileRailPoint(page,edge) {
     for(let radius=0;radius<90;radius+=4)for(let x=-radius;x<=radius;x+=4)for(let y=-radius;y<=radius;y+=4){
       const point={x:mid.x+x,y:mid.y+y};
       if(point.x<stage.left+28||point.x>stage.right-28||point.y<stage.top+28||point.y>stage.bottom-28)continue;
-      if(renderer.hitTestLane(s,0,{x:point.x-stage.left,y:point.y-stage.top},4)===edge)return point;
+      if(document.elementFromPoint(point.x,point.y)?.closest('[data-train-id],[data-train-group]'))continue;
+      if(renderer.hitTestLane(s,0,{x:point.x-stage.left,y:point.y-stage.top},4)===edge){
+        const badges=[...document.querySelectorAll('[data-train-id],[data-train-group]')];
+        if(badges.some(el=>{const r=el.getBoundingClientRect();return point.x>=r.left-8&&point.x<=r.right+8&&point.y>=r.top-8&&point.y<=r.bottom+8;}))continue;
+        return point;
+      }
     }
     throw new Error(`mobile rail edge ${edge} not visible`);
   },edge);

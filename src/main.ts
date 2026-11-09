@@ -711,7 +711,7 @@ stage.addEventListener('pointerdown', (e) => {
     gestureKind = 'endpoint'; gestureLine = handle.line; endpointSide = handle.side;
     originalStops = [...controller.getState().lines[handle.line].stops];
     draft = [...originalStops]; draftLoop = false;
-    endpointVisited = handle.side === 'start' ? originalStops[0] : originalStops.at(-1)!;
+    endpointVisited = null;
     pointerStation = null; insertAt = null; moved = false;
     dragStart = { x: e.clientX, y: e.clientY };
     $('station-peek').hidden = true;
@@ -818,6 +818,9 @@ stage.addEventListener('pointermove', (e) => {
   }
   const id = nearest(e.clientX, e.clientY);
   if (gestureKind === 'endpoint') {
+    // The handle is offset from its station; merely pressing or nudging it
+    // must not count as crossing the endpoint.
+    if (!moved) return;
     if (id === null) {
       if (draftLoop) { draftLoop = false; endpointVisited = null; preview(); }
       drawRouteTip(e); return;
@@ -825,6 +828,15 @@ stage.addEventListener('pointermove', (e) => {
     // Remain latched to the last visited station through blank space when
     // backtracking, but allow a disarmed loop closure to re-arm on re-entry.
     if (id === endpointVisited) { drawRouteTip(e); return; }
+    const own = endpointSide === 'start' ? originalStops[0] : originalStops.at(-1)!;
+    // Crossing the offset handle's own station previews a retraction, but a
+    // subsequent outside station means the player was extending through it.
+    // A release on the own station (or travel toward the prior stop) keeps the
+    // retraction. Do not apply this to later stops in a backtracking gesture.
+    if (endpointVisited === own && !originalStops.includes(id) &&
+        draft.length === originalStops.length - 1 &&
+        draft.every((stop, i) => stop === originalStops[i + (endpointSide === 'start' ? 1 : 0)]))
+      draft = [...originalStops];
     endpointVisited = id;
     if (draftLoop) { draftLoop = false; preview(); }
     const next = endpointStep(originalStops, endpointSide, draft, id);

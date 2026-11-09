@@ -43,7 +43,7 @@ async function step(page, gesture, id, expected, label, before) {
   await gesture.move(await point(page, id));
   assert.equal(await hash(page), before, `${label}: hover must not mutate authority`);
   const preview = await page.evaluate(() => window.__routePreview);
-  assert.deepEqual(preview?.stops, expected.length ? expected : [id], `${label}: transient preview reflects backtracking`);
+  assert.deepEqual(preview?.stops, expected, `${label}: transient preview reflects backtracking`);
   assert.equal(preview?.valid, true, `${label}: preview valid`);
   if (expected.length < 3) {
     const withdrawn = await page.locator('[data-route-retract]').count();
@@ -105,16 +105,43 @@ try {
         window.__lastTouchMove = { x: e.clientX, y: e.clientY };
       });
     });
+    // The offset handle must cross its own station for the first retraction.
+    await setup(page, touch);
+    const first = await pointer(page, touch), firstHash = await hash(page);
+    const grab = await handle(page, 'end'), own = await point(page, 3);
+    await first.down(grab);
+    assert.equal(await hash(page), firstHash, `${width} press cannot edit route`);
+    await first.move({ x: grab.x + 2, y: grab.y + 2 });
+    assert.equal(await hash(page), firstHash, `${width} tiny movement cannot edit route`);
+    await first.move(own);
+    assert.equal(await hash(page), firstHash, `${width} own station preview remains transient`);
+    assert.deepEqual((await page.evaluate(() => window.__routePreview))?.stops, [1, 2], `${width} crossing own endpoint retracts it immediately`);
+    await first.up(); await first.close();
+    assert.deepEqual((await line(page)).stops, [1, 2], `${width} own endpoint retract commits on release`);
+    await setup(page, touch);
+    const short = await pointer(page, touch), shortHash = await hash(page);
+    const shortGrab = await handle(page, 'end');
+    await short.down(shortGrab);
+    await short.move({ x: shortGrab.x + 2, y: shortGrab.y + 2 });
+    await short.up(); await short.close();
+    assert.equal(await hash(page), shortHash, `${width} tiny movement and release cannot retract`);
+    await setup(page, touch);
+    const start = await pointer(page, touch);
+    await start.down(await handle(page, 'start'));
+    await start.move(await point(page, 1));
+    assert.deepEqual((await page.evaluate(() => window.__routePreview))?.stops, [2, 3], `${width} start handle retracts own station immediately`);
+    await start.up(); await start.close();
+    assert.deepEqual((await line(page)).stops, [2, 3], `${width} start own station release commits`);
     for (const side of ['end', 'start']) {
       await setup(page, touch);
       const before = await hash(page), drag = await pointer(page, touch);
       await drag.down(await handle(page, side));
       if (side === 'end') {
-        await step(page, drag, 2, [1, 2], `${width} end retract`, before);
-        await step(page, drag, 1, [], `${width} end last segment clears`, before);
+        await step(page, drag, 3, [1, 2], `${width} end own endpoint`, before);
+        await step(page, drag, 2, [1], `${width} end current endpoint`, before);
       } else {
-        await step(page, drag, 2, [2, 3], `${width} start retract`, before);
-        await step(page, drag, 3, [], `${width} start last segment clears`, before);
+        await step(page, drag, 1, [2, 3], `${width} start own endpoint`, before);
+        await step(page, drag, 2, [3], `${width} start current endpoint`, before);
       }
       await drag.up(); await drag.close();
       assert.deepEqual((await line(page)).stops, [], `${width} ${side}: last segment clears line`);
@@ -123,7 +150,19 @@ try {
     await setup(page, touch);
     const before = await hash(page), drag = await pointer(page, touch);
     await drag.down(await handle(page, 'end'));
-    await step(page, drag, 2, [1, 2], `${width} retract`, before);
+    await step(page, drag, 3, [1, 2], `${width} retract`, before);
+    const blank = await blankNear(page, 3);
+    await drag.move(blank);
+    await drag.move(await point(page, 3));
+    assert.deepEqual((await page.evaluate(() => window.__routePreview))?.stops, [1, 2], `${width} own endpoint blank re-entry never double retracts`);
+    await drag.move(blank);
+    await step(page, drag, 2, [1], `${width} retract next current endpoint`, before);
+    await step(page, drag, 2, [1], `${width} repeated current station stays latched`, before);
+    await drag.move(blank);
+    await step(page, drag, 2, [1], `${width} blank re-entry stays latched`, before);
+    await drag.move(blank);
+    await step(page, drag, 3, [1], `${width} skipping intermediate stop cannot restore`, before);
+    await step(page, drag, 2, [1, 2], `${width} reverse restores intermediate`, before);
     await step(page, drag, 3, [1, 2, 3], `${width} re-extend`, before);
     assert.equal(await page.locator('[data-route-retract]').count(), 0, 're-extension removes withdrawal marks');
     await drag.up(); await drag.close();
@@ -131,11 +170,14 @@ try {
     await setup(page, touch);
     const reversed = await pointer(page, touch), reverseBefore = await hash(page);
     await reversed.down(await handle(page, 'end'));
-    await step(page, reversed, 2, [1, 2], `${width} reverse first`, reverseBefore);
-    await step(page, reversed, 1, [], `${width} reverse last`, reverseBefore);
-    await step(page, reversed, 2, [1, 2], `${width} reverse restores last rail`, reverseBefore);
+    await step(page, reversed, 3, [1, 2], `${width} reverse first`, reverseBefore);
+    await step(page, reversed, 2, [1], `${width} reverse last`, reverseBefore);
+    await step(page, reversed, 2, [1], `${width} reverse repeated current`, reverseBefore);
+    await step(page, reversed, 3, [1], `${width} reverse skips b`, reverseBefore);
+    await step(page, reversed, 2, [1, 2], `${width} reverse restores b`, reverseBefore);
+    await step(page, reversed, 3, [1, 2, 3], `${width} reverse restores both rails`, reverseBefore);
     await reversed.up(); await reversed.close();
-    assert.deepEqual((await line(page)).stops, [1, 2], `${width} released reversal keeps restored rail`);
+    assert.deepEqual((await line(page)).stops, [1, 2, 3], `${width} released reversal keeps restored rails`);
     await setup(page, touch);
     const beforeCancel = await hash(page), canceled = await pointer(page, touch);
     await canceled.down(await handle(page, 'end'));

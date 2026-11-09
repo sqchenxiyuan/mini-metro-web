@@ -70,9 +70,41 @@ try {
    const a={x:start.x+start.width/2,y:start.y+start.height/2},b={x:goal.x+goal.width/2,y:goal.y+goal.height/2};
    const cdp=await page.context().newCDPSession(page);
    const touch=(type,x,y)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'?[]:[{id:1,x,y,radiusX:4,radiusY:4,force:1}]});
+   // The natural direct extension traverses the offset handle's own station.
+   // Crossing it must not permanently remove that stop on the way to station 3.
    await touch('touchStart',a.x,a.y);
-   for(let i=1;i<=14;i++)await touch('touchMove',a.x+(b.x-a.x)*i/14,a.y+(b.y-a.y)*i/14);
+   for(let i=1;i<=25;i++)await touch('touchMove',a.x+(b.x-a.x)*i/25,a.y+(b.y-a.y)*i/25);
    await touch('touchEnd',b.x,b.y);
+   assert.deepEqual((await page.evaluate(()=>window.metro.getState())).lines.slice(0,3).map(l=>l.stops),
+     [[1,2],[1,3],[2,1,3]],'direct native chord extends line 3 without retracting its crossed own endpoint');
+   const ownHandle=await page.getByRole('button',{name:/3号线终点.*延长/}).boundingBox();
+   const own=await page.evaluate(()=>window.metro.projectStation(3));
+   assert.ok(ownHandle,'extended line retains its own draggable end');
+   await touch('touchStart',ownHandle.x+ownHandle.width/2,ownHandle.y+ownHandle.height/2);
+   await touch('touchMove',own.x,own.y);
+   await touch('touchEnd',own.x,own.y);
+   assert.deepEqual((await page.evaluate(()=>window.metro.getState())).lines.slice(0,3).map(l=>l.stops),
+     [[1,2],[1,3],[2,1]],'deliberate release on own endpoint still retracts exact line 3');
+   await page.locator('#zoom-reset').click();
+   const detourStart=await page.getByRole('button',{name:/3号线终点.*延长/}).boundingBox();
+   const detourGoal=await page.locator('[data-station="3"]').boundingBox();
+   assert.ok(detourStart&&detourGoal);
+   const detourA={x:detourStart.x+detourStart.width/2,y:detourStart.y+detourStart.height/2};
+   const detourB={x:detourGoal.x+detourGoal.width/2,y:detourGoal.y+detourGoal.height/2};
+   // The direct chord may cross the grabbed route's own terminal station,
+   // so retain a separate detour check for exact overlapping-line ownership.
+   const waypoint=await page.evaluate(({a,b})=>{
+     const own=window.metro.projectStation(1),box=document.querySelector('#stage').getBoundingClientRect();
+     const dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);
+     const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+     const candidates=[1,-1].map(sign=>({x:mid.x-sign*dy/length*24,y:mid.y+sign*dx/length*24}));
+     const distanceToSegment=(p,q,r)=>{const t=Math.max(0,Math.min(1,((r.x-p.x)*(q.x-p.x)+(r.y-p.y)*(q.y-p.y))/((q.x-p.x)**2+(q.y-p.y)**2)));return Math.hypot(r.x-p.x-t*(q.x-p.x),r.y-p.y-t*(q.y-p.y));};
+     return candidates.find(p=>p.x>box.left+20&&p.x<box.right-20&&p.y>box.top+20&&p.y<box.bottom-20&&distanceToSegment(a,p,own)>30&&distanceToSegment(p,b,own)>30);
+   },{a:detourA,b:detourB});
+   assert.ok(waypoint,`touch extension can avoid the retracting endpoint: ${JSON.stringify(await page.evaluate(({a,b})=>({a,b,own:window.metro.projectStation(1),stage:document.querySelector('#stage').getBoundingClientRect().toJSON()}),{a:detourA,b:detourB}))}`);
+   await touch('touchStart',detourA.x,detourA.y);
+   for(const [from,to] of [[detourA,waypoint],[waypoint,detourB]])for(let i=1;i<=14;i++)await touch('touchMove',from.x+(to.x-from.x)*i/14,from.y+(to.y-from.y)*i/14);
+   await touch('touchEnd',detourB.x,detourB.y);
    const state=await page.evaluate(()=>window.metro.getState());
    assert.deepEqual(state.lines.slice(0,3).map(l=>l.stops),[[1,2],[1,3],[2,1,3]],'real touch extends exact third line, not overlapping first line');
    await page.screenshot({path:'/opt/data/cache/scratch/metro-acceptance/568x320-third-line-touch.png'});
