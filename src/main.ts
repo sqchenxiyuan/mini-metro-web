@@ -424,6 +424,7 @@ let gesturePointer: number | null = null;
 let loopPoint = { x: 0, y: 0 };
 const handleRadius = 13;
 const endpointButtons = new Map<string, HTMLButtonElement>();
+const fallbackButtons = new Map<string, HTMLButtonElement>();
 const handlePositions = new Map<string, { x: number; y: number }>();
 const handleFallback = document.createElement('div');
 handleFallback.setAttribute('role', 'group');
@@ -444,16 +445,35 @@ function overlaps(a: HitRect, b: HitRect): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 // One measured, ordered pass: never place a handle independently of its peers.
-// The DOM boxes are the actual touch targets (including parked train badges).
+// Train motion is not an obstacle. Reserve where a train *could park* at every
+// station, so arriving, departing and regrouping badges cannot move the handle.
 function layoutHandles(): Map<string, { x: number; y: number }> {
   const result = new Map<string, { x: number; y: number }>();
   const bounds = stage.getBoundingClientRect();
   const blocked: HitRect[] = [
     ...nodes.values(),
-    ...trainLayer.querySelectorAll<HTMLElement>('[data-train-id], [data-train-group]'),
     ...document.querySelectorAll<HTMLElement>('#context-actions, #mobile-crowd-alert, #queue-browser-toggle, #map-alerts, .map-tools, #creative-picker'),
   ].filter(el => !el.hidden && el.getClientRects().length > 0)
     .map(el => el.getBoundingClientRect());
+  // Match the two CSS badge hit boxes and the placement in paint(): a single
+  // parked train sits beside its station on mobile, while a group sits above.
+  // These projections depend only on station geometry and camera, never trains.
+  // minimal.css renders the desktop group at 28px (text + padding + border),
+  // unlike the 25px minimum for a blank single. Both are 35px on mobile.
+  // Subpixel CSS positioning rounds independently of renderer projections;
+  // one pixel of slack on each edge keeps the true button hit box reserved.
+  const badgeWidth = mobileMap ? 44 : 34;
+  const singleHeight = mobileMap ? 35 : 25, groupHeight = mobileMap ? 35 : 28;
+  const badgeSlack = 1;
+  for (const station of lastState.stations) {
+    const p = renderer.project(station.x, station.y, 0.9);
+    const x = bounds.left + p.x, y = bounds.top + p.y;
+    const singleX = x + (mobileMap ? 47 : 0), singleY = y - (mobileMap ? 42 : 0);
+    blocked.push({ left: singleX - badgeWidth / 2 - badgeSlack, right: singleX + badgeWidth / 2 + badgeSlack,
+      top: singleY - singleHeight / 2 - badgeSlack, bottom: singleY + singleHeight / 2 + badgeSlack });
+    blocked.push({ left: x - badgeWidth / 2 - badgeSlack, right: x + badgeWidth / 2 + badgeSlack,
+      top: y - groupHeight * 1.55 - badgeSlack, bottom: y - groupHeight * 0.55 + badgeSlack });
+  }
   if (renderer instanceof Mobile3DRenderer) {
     const stats = renderer.mapStats();
     for (const p of stats.bounds) if (p.pile) {
@@ -537,23 +557,33 @@ function paintHandles(): void {
   const visible = new Set<string>();
   handlePositions.clear();
   const locations = layoutHandles();
-  handleFallback.replaceChildren();
+  const fallbackVisible = new Set<string>();
   for (const line of controller.getState().lines) for (const side of ['start', 'end'] as const) {
-    if (line.loop || line.stops.length < 2 || locations.has(`${line.id}-${side}`)) continue;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = `${line.id + 1}号线${side === 'start' ? '起点' : '终点'} ↗`;
-    button.setAttribute('aria-label', `${line.id + 1}号线${side === 'start' ? '起点' : '终点'}延长：地图空间不足，激活后用键盘选目标车站`);
+    const key = `${line.id}-${side}`;
+    if (line.loop || line.stops.length < 2 || locations.has(key)) continue;
+    fallbackVisible.add(key);
+    let button = fallbackButtons.get(key);
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = `${line.id + 1}号线${side === 'start' ? '起点' : '终点'} ↗`;
+      button.setAttribute('aria-label', `${line.id + 1}号线${side === 'start' ? '起点' : '终点'}延长：地图空间不足，激活后用键盘选目标车站`);
+      button.style.cssText = `flex:none;min-width:44px;min-height:44px;border:2px solid ${LINE_COLORS[line.id]};background:#fffaf6`;
+      button.onclick = () => {
+        armedEndpoint = { line: line.id, side };
+        for (const other of endpointButtons.values()) other.setAttribute('aria-pressed', 'false');
+        for (const other of fallbackButtons.values()) other.setAttribute('aria-pressed', String(other === button));
+      };
+      fallbackButtons.set(key, button);
+    }
     button.setAttribute('aria-pressed', String(armedEndpoint?.line === line.id && armedEndpoint.side === side));
-    button.style.cssText = `flex:none;min-width:44px;min-height:44px;border:2px solid ${LINE_COLORS[line.id]};background:#fffaf6`;
-    button.onclick = () => {
-      armedEndpoint = { line: line.id, side };
-      for (const other of endpointButtons.values()) other.setAttribute('aria-pressed', 'false');
-      for (const other of handleFallback.querySelectorAll('button')) other.setAttribute('aria-pressed', String(other === button));
-    };
-    handleFallback.append(button);
+    // Reappending a connected button would detach focus on each paint.
+    if (!button.isConnected) handleFallback.append(button);
   }
-  handleFallback.hidden = !handleFallback.childElementCount;
+  for (const [key, button] of fallbackButtons) if (!fallbackVisible.has(key)) {
+    button.remove(); fallbackButtons.delete(key);
+  }
+  handleFallback.hidden = !fallbackVisible.size;
   for (const [key, p] of locations) {
     const [id, side] = key.split('-');
     const lineId = Number(id);
@@ -565,7 +595,7 @@ function paintHandles(): void {
       button.type = 'button';
       button.className = 'endpoint-handle';
       button.setAttribute('aria-label', `${lineId + 1}号线${side === 'start' ? '起点' : '终点'}延长：激活后选目标车站，Escape 取消`);
-      button.setAttribute('aria-pressed', 'false');
+      button.setAttribute('aria-pressed', String(armedEndpoint?.line === lineId && armedEndpoint.side === side));
       button.addEventListener('click', e => {
         if (e.detail !== 0 || controller.mode === 'replay') return;
         armedEndpoint = { line: lineId, side: side as HandleSide };
@@ -574,6 +604,7 @@ function paintHandles(): void {
       endpointLayer.append(button);
       endpointButtons.set(key, button);
     }
+    button.setAttribute('aria-pressed', String(armedEndpoint?.line === lineId && armedEndpoint.side === side));
     button.style.left = `${p.x - rect.left}px`;
     button.style.top = `${p.y - rect.top}px`;
     button.style.setProperty('--line', LINE_COLORS[lineId]);
