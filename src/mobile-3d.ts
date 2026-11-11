@@ -404,7 +404,7 @@ export class Mobile3DRenderer {
       ? start+70*(targetY-current)/(shifted-current):start;
     this.camera();this.scene.render(this.visualState!,this.selectedLine);this.paint();
   }
-  resetCamera(){this.moved=false;this.openingCamera();this.camera();if(this.visualState){this.reflow();this.frameOpeningQueue();this.scene.render(this.visualState!,this.selectedLine);this.paint();}}
+  resetCamera(){this.scene.clearPreview();this.moved=false;this.openingCamera();this.camera();if(this.visualState){this.reflow();this.frameOpeningQueue();this.scene.render(this.visualState!,this.selectedLine);this.paint();}}
   frameOpeningStations(){if(!this.moved){this.openingCamera();this.camera();if(this.visualState){this.reflow();this.frameOpeningQueue();this.scene.render(this.visualState!,this.selectedLine);this.paint();}}}
   showPreview(s:State,stops:number[],line:number,valid=true){
     this.scene.showPreview(this.visualState??this.prepare(s),stops,line,valid);this.scene.render(this.visualState!,line);this.paint();}

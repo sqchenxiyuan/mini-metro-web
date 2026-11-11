@@ -8,6 +8,10 @@ const origin = process.env.METRO_TEST_URL ?? 'http://127.0.0.1:5175';
 const output = 'test-results/responsive-3d';
 await mkdir(output, { recursive: true });
 const errors = [];
+const settleFrames = (page, count) => page.evaluate(count => new Promise(resolve => {
+  const frame = () => { if (--count > 0) requestAnimationFrame(frame); else resolve(); };
+  requestAnimationFrame(frame);
+}), count);
 const touch = async (page, path) => {
   const session = await page.context().newCDPSession(page);
   await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: path[0].x, y: path[0].y, id: 1 }] });
@@ -109,6 +113,10 @@ try {
     assert.equal(await page.locator('#queue-focus-pile').isVisible(),true);
     await page.locator('#queue-focus-pile').click();
     assert.equal(await page.locator('#queue-browser').evaluate(el=>el.open),false);
+    // Pile focus deliberately settles for ten RAFs after cue-row resize. Let
+    // that finite camera operation finish, plus two layout frames, before a
+    // later manual pan; otherwise its remaining callbacks fight ArrowDown.
+    await settleFrames(page, 12);
     const focus=await page.evaluate(() => window.metro.mobileMapStats());
     assert.ok(Math.abs(focus.center.x-focus.bounds.find(b=>b.id===1).x)<150,'queue focus must center its owner');
     await page.screenshot({path:`${output}/${width}x${height}-queue.png`});
@@ -116,6 +124,8 @@ try {
     // offsets, including after the owner cue reserves its own stage row.
     await keyboardMap.focus();
     await page.locator('#zoom-reset').click();
+    // Reset can add/remove an owner row and trigger ResizeObserver reflow.
+    await settleFrames(page, 2);
     await keyboardMap.focus();
     await page.evaluate(() => {
       const station=window.metro.controller.session.state.stations[0];

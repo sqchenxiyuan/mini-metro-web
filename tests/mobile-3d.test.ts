@@ -23,6 +23,16 @@ function queueHarness(s: ReturnType<typeof createState>) {
 }
 
 describe('narrow WebGL map adapter', () => {
+  it('clears edit feedback when resetting the mobile camera', () => {
+    const adapter = queueHarness(createState());
+    let cleared = 0;
+    (adapter as any).scene = { clearPreview: () => { cleared++; } };
+    (adapter as any).visualState = null;
+    (adapter as any).openingCamera = () => {};
+    (adapter as any).camera = () => {};
+    adapter.resetCamera();
+    expect(cleared).toBe(1);
+  });
   it('warps canonical rail bends with the river instead of recomputing bends from warped endpoints', () => {
     const s=createState({mode:'creative',city:'orchard'});
     s.stations[0].x=-2;s.stations[0].y=-8;

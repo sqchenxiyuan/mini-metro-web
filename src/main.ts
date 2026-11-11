@@ -3,11 +3,11 @@ import './style.css';
 import './minimal.css';
 import './mobile-map.css';
 import { MetroController } from './browser';
-import { hitTestVisibleLane, MetroRenderer } from './renderer';
+import { hitTestVisibleLane, MetroRenderer, stationOutline } from './renderer';
 import { layoutSceneCues } from './overlay-layout';
 import { creativeStationPicker } from './station-picker';
 import { Mobile3DRenderer } from './mobile-3d';
-import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease } from './route-gestures';
+import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease, paintedRailOwner, middleRailEdit } from './route-gestures';
 import { MetroAudio } from './audio';
 import { observeState } from './session';
 import {
@@ -342,6 +342,9 @@ $('context-actions').addEventListener('click', (event) => {
   hideContext();
 });
 function setLine(id: number): void {
+  // The grabbed painted lane owns the draft until release/cancel, even if a
+  // keyboard shortcut changes the inspector selection during a native drag.
+  if (gesturePointer !== null) { controller.selectedLine = id; uiAt = 0; return; }
   controller.selectedLine = id;
   if (!integrationSurface) showContext({ type: 'line', id });
   setLineChooser(false);
@@ -429,6 +432,7 @@ function preview(): void {
   }
   // A one-stop draft means the last segment will clear the line on release.
   renderer.showPreview(s, draftLoop ? [...draft, draft[0]] : draft, lineId, valid);
+  snapStation(gestureTarget, valid);
 }
 let panning: { x: number; y: number } | null = null;
 let suppressCreativeClick = false;
@@ -436,6 +440,7 @@ let pointerStation: number | null = null;
 let insertAt: number | null = null,
   originalStops: number[] = [];
 let gestureLine: number | null = null;
+let gestureTarget: number | null = null;
 let gestureKind: 'body' | 'endpoint' | 'insert' | 'loop' | null = null;
 let endpointSide: 'start' | 'end' = 'end';
 let endpointVisited: number | null = null;
@@ -569,10 +574,42 @@ const endpointLayer = document.createElement('div');
 endpointLayer.className = 'endpoint-layer';
 stage.append(endpointLayer);
 endpointLayer.addEventListener('click', e => e.stopPropagation());
+// Separate feedback DOM: handle paints cannot restart a pulse or detach focus.
+const snapLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+snapLayer.classList.add('route-feedback');
+snapLayer.setAttribute('aria-hidden', 'true');
+stage.append(snapLayer);
+let snapKey: string | null = null, snapTimer = 0;
+function clearSnap(): void {
+  clearTimeout(snapTimer); snapLayer.replaceChildren(); snapKey = null;
+}
+function snapStation(id: number | null, valid: boolean): void {
+  if (id === null || !valid || gestureLine === null || !moved) { clearSnap(); return; }
+  const station = controller.getState().stations.find(p => p.id === id);
+  if (!station) { clearSnap(); return; }
+  const key = `${gestureLine}:${id}:${draft?.join(',')}:${draftLoop}`;
+  if (key === snapKey) return;
+  clearSnap(); snapKey = key;
+  const point = renderer.project(station.x, station.y, .6);
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  // Trace the roof silhouette, never its filled face or the waiting pile below.
+  const project = renderer instanceof Mobile3DRenderer ? renderer.projectTrackPoint.bind(renderer) : renderer.project.bind(renderer);
+  const origin = project(0, 0, .6), unit = project(1, 0, .6);
+  const radius = Math.max(17, Math.min(39, Math.hypot(unit.x - origin.x, unit.y - origin.y) * .7));
+  const outline = stationOutline(station.shape, radius).getPoints(32);
+  path.setAttribute('d', outline.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${-p.y}`).join(' ') + ' Z');
+  path.setAttribute('transform', `translate(${point.x} ${point.y})`);
+  path.setAttribute('data-route-snap', String(id));
+  path.setAttribute('data-shape', station.shape);
+  path.style.setProperty('--line', LINE_COLORS[gestureLine]);
+  snapLayer.append(path);
+  snapTimer = window.setTimeout(() => snapLayer.replaceChildren(), 360);
+}
 function paintHandles(): void {
   const rect = stage.getBoundingClientRect();
   const draggedTip = handleLayer.querySelector('[data-loop-tip]');
   const routeTip = handleLayer.querySelector('[data-route-tip]');
+  const middleTip = handleLayer.querySelector('[data-middle-tip]');
   const retractRails = [...handleLayer.querySelectorAll('[data-route-retract]')];
   handleLayer.replaceChildren();
   const visible = new Set<string>();
@@ -648,6 +685,15 @@ function paintHandles(): void {
     circle.setAttribute('stroke', '#fff'); circle.setAttribute('stroke-width', '2');
     circle.setAttribute('data-route-handle', key);
     handleLayer.append(circle);
+    const center = { x: p.x - rect.left, y: p.y - rect.top };
+    const owner = station ? renderer.project(station.x, station.y, .6) : { x: center.x - 1, y: center.y };
+    const angle = Math.atan2(center.y - owner.y, center.x - owner.x);
+    const cap = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    cap.setAttribute('data-endpoint-cap', key);
+    cap.setAttribute('d', 'M -10 0 L 5 0 M 5 -9 L 5 9');
+    cap.setAttribute('transform', `translate(${center.x} ${center.y}) rotate(${angle * 180 / Math.PI})`);
+    cap.setAttribute('stroke', LINE_COLORS[lineId]);
+    handleLayer.append(cap);
   }
   for (const [key, button] of endpointButtons) if (!visible.has(key)) {
     button.remove(); endpointButtons.delete(key);
@@ -659,14 +705,17 @@ function paintHandles(): void {
   for (const rail of retractRails) handleLayer.append(rail);
   if (draggedTip) handleLayer.append(draggedTip);
   if (routeTip) handleLayer.append(routeTip);
+  if (middleTip) handleLayer.append(middleTip);
 }
 function clearGesture(): void {
   draft = null; insertAt = null; pointerStation = null; gestureLine = null;
-  gestureKind = null; loopEdge = null; endpointVisited = null; gesturePointer = null;
+  gestureKind = null; loopEdge = null; endpointVisited = null; gesturePointer = null; gestureTarget = null;
   renderer.clearPreview();
+  clearSnap();
   handleLayer.querySelectorAll('[data-route-retract]').forEach(node => node.remove());
   handleLayer.querySelector('[data-loop-tip]')?.remove();
   handleLayer.querySelector('[data-route-tip]')?.remove();
+  handleLayer.querySelector('[data-middle-tip]')?.remove();
 }
 function drawRouteTip(e: PointerEvent): void {
   handleLayer.querySelector('[data-route-tip]')?.remove();
@@ -684,19 +733,36 @@ function drawRouteTip(e: PointerEvent): void {
   tip.setAttribute('stroke-width', '3'); tip.setAttribute('stroke-dasharray', '7 5');
   handleLayer.append(tip);
 }
+function drawMiddleTip(e: PointerEvent): void {
+  handleLayer.querySelector('[data-middle-tip]')?.remove();
+  if (!moved || gestureLine === null || insertAt === null) return;
+  const s = controller.getState(), rect = stage.getBoundingClientRect(), edge = insertAt;
+  const a = s.stations.find(p => p.id === originalStops[edge - 1]);
+  const b = s.stations.find(p => p.id === originalStops[edge % originalStops.length]);
+  if (!a || !b) return;
+  const from = renderer.project(a.x, a.y, .6), to = renderer.project(b.x, b.y, .6);
+  const tip = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  tip.setAttribute('data-middle-tip', '');
+  tip.setAttribute('data-pointer', `${e.clientX},${e.clientY}`);
+  tip.setAttribute('d', `M ${from.x} ${from.y} L ${e.clientX - rect.left} ${e.clientY - rect.top} L ${to.x} ${to.y}`);
+  tip.setAttribute('fill', 'none'); tip.setAttribute('stroke', LINE_COLORS[gestureLine]);
+  tip.setAttribute('stroke-width', '3'); tip.setAttribute('stroke-linejoin', 'round');
+  tip.setAttribute('opacity', s.mode === 'extreme' ? '.4' : '.85');
+  handleLayer.append(tip);
+}
 function passengerUnderPointer(x:number,y:number): boolean {
   if(!(renderer instanceof Mobile3DRenderer))return false;
   const rect=stage.getBoundingClientRect();
   return renderer.mapStats().visiblePositions.some(p=>Math.hypot(rect.left+p.x-x,rect.top+p.y-y)<=9);
 }
-function nearbySegment(x: number, y: number): number | null {
+function nearbyRail(x: number, y: number): { line: number; edge: number } | null {
   const rect = stage.getBoundingClientRect();
-  const nearestTrack = (renderer instanceof Mobile3DRenderer)
-    ? renderer.hitTestLane(controller.getState(), controller.selectedLine,
-      { x: x - rect.left, y: y - rect.top }, 12)
-    : hitTestVisibleLane(controller.getState(), controller.selectedLine,
-      { x: x - rect.left, y: y - rect.top }, renderer.project.bind(renderer), 12);
-  return nearestTrack;
+  const state = controller.getState(), point = { x: x - rect.left, y: y - rect.top };
+  return paintedRailOwner(state.lines.filter(line => line.stops.length > 1).map(line => line.id),
+    (line, radius) => renderer instanceof Mobile3DRenderer
+      ? renderer.hitTestLane(state, line, point, radius)
+      : hitTestVisibleLane(state, line, point, renderer.project.bind(renderer), radius,
+        renderer.getPaintedTrackLayout() ?? undefined), 12, controller.selectedLine);
 }
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || controller.mode === 'replay' || gesturePointer !== null) return;
@@ -738,11 +804,13 @@ stage.addEventListener('pointerdown', (e) => {
   dragStart = { x: e.clientX, y: e.clientY };
   moved = false;
   if (id === null) {
-    insertAt = nearbySegment(e.clientX, e.clientY);
+    const rail = nearbyRail(e.clientX, e.clientY);
+    insertAt = rail?.edge ?? null;
     if (insertAt !== null && !redrawing) {
-      gestureLine = controller.selectedLine;
-      originalStops = [...currentLine().stops];
-      if (currentLine().loop) {
+      gestureLine = rail!.line;
+      const owner = controller.getState().lines[gestureLine];
+      originalStops = [...owner.stops];
+      if (owner.loop) {
         gestureKind = 'loop'; loopEdge = insertAt;
         loopPoint = { x: e.clientX, y: e.clientY };
         draft = breakLoopEdge(originalStops, insertAt);
@@ -782,6 +850,15 @@ stage.addEventListener('pointermove', (e) => {
   const distance = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
   if (distance > 8) moved = true;
   if (gestureKind === 'loop') {
+    const target = nearest(e.clientX, e.clientY);
+    gestureTarget = target;
+    const insertion = middleRailEdit(originalStops, loopEdge!, target, true);
+    if (insertion) {
+      handleLayer.querySelector('[data-loop-tip]')?.remove();
+      draft = insertion.stops; draftLoop = true; preview();
+      return;
+    }
+    draft = breakLoopEdge(originalStops, loopEdge!)!; draftLoop = false; clearSnap();
     // Preview the opened route and the pulled rail tip without editing the authoritative map.
     if (distance > 8 && loopEdge !== null) {
       const rect = stage.getBoundingClientRect();
@@ -817,6 +894,21 @@ stage.addEventListener('pointermove', (e) => {
     if (dx || dy) { renderer.pan(dx, dy); syncMobileCameraTargets(); }
   }
   const id = nearest(e.clientX, e.clientY);
+  gestureTarget = id;
+  if (id === null) clearSnap();
+  if (gestureKind === 'insert' && insertAt !== null) {
+    handleLayer.querySelector('[data-middle-tip]')?.remove();
+    const edit = middleRailEdit(originalStops, insertAt, id);
+    draft = edit?.stops ?? [...originalStops]; draftLoop = false;
+    if (edit) preview();
+    else {
+      renderer.clearPreview();
+      clearSnap();
+      handleLayer.querySelectorAll('[data-route-retract]').forEach(node => node.remove());
+      drawMiddleTip(e);
+    }
+    return;
+  }
   if (gestureKind === 'endpoint') {
     // The handle is offset from its station; merely pressing or nudging it
     // must not count as crossing the endpoint.
@@ -852,12 +944,7 @@ stage.addEventListener('pointermove', (e) => {
     if (draftLoop) { draftLoop = false; preview(); }
     drawRouteTip(e); return;
   }
-  if (gestureKind === 'insert' && insertAt !== null) {
-    if (!originalStops.includes(id)) {
-      draft = [...originalStops]; draft.splice(insertAt, 0, id); preview();
-    }
-    return;
-  }
+
   if (id === draft[0] && draft.length >= 3) { draftLoop = true; preview(); drawRouteTip(e); return; }
   if (draft.length > 1 && id === draft.at(-2)) {
     draft.pop(); draftLoop = false; preview(); drawRouteTip(e); return;
@@ -918,24 +1005,45 @@ function focusPeekStation(id: number): void {
 }
 function finishDraw(e: PointerEvent): void {
   if (gesturePointer !== null && gesturePointer !== e.pointerId) return;
+  if ((gestureKind === 'insert' || gestureKind === 'loop') && gestureLine !== null) {
+    const line = controller.getState().lines[gestureLine];
+    if (!line || line.loop !== (gestureKind === 'loop') || line.stops.length !== originalStops.length ||
+        line.stops.some((id, i) => id !== originalStops[i])) {
+      clearGesture(); paintHandles(); return;
+    }
+    // Release itself is authoritative, not a latched preview from an earlier hover.
+    if (gestureKind === 'insert') {
+      const candidate = middleRailEdit(originalStops, insertAt!, nearest(e.clientX, e.clientY));
+      if (!candidate) { clearGesture(); paintHandles(); return; }
+      draft = candidate.stops; draftLoop = false;
+    }
+  }
   if (gestureKind === 'loop' && loopEdge !== null && gestureLine !== null) {
     const bounds = stage.getBoundingClientRect();
     const point = { x: e.clientX, y: e.clientY };
-    if (safeLoopRelease(loopPoint, point, bounds,
-        nearest(point.x, point.y) !== null || nearbySegment(point.x, point.y) !== null || passengerUnderPointer(point.x, point.y)) &&
+    const insertion = moved ? middleRailEdit(originalStops, loopEdge, nearest(point.x, point.y), true) : null;
+    if (insertion) {
+      const action: Action = { type: 'route', line: gestureLine, stops: insertion.stops, loop: true };
+      if (applyAction(copy(controller.getState()), action).ok) act(action, '拖动环线轨道接入新车站。');
+    } else if (safeLoopRelease(loopPoint, point, bounds,
+        nearest(point.x, point.y) !== null || nearbyRail(point.x, point.y) !== null || passengerUnderPointer(point.x, point.y)) &&
         controller.getState().mode !== 'extreme') {
       const stops = breakLoopEdge(originalStops, loopEdge);
-      if (stops) act({ type: 'route', line: gestureLine, stops, loop: false }, '拉开环线轨道。');
+      if (stops) {
+        const action: Action = { type: 'route', line: gestureLine, stops, loop: false };
+        if (applyAction(copy(controller.getState()), action).ok) act(action, '拉开环线轨道。');
+      }
     }
   } else if (draft && moved && gestureLine !== null &&
       (gestureKind === 'endpoint' ?
         (draft.length !== originalStops.length || draft.some((id, i) => id !== originalStops[i]) || draftLoop) : draft.length >= 2) &&
       !(gestureKind === 'endpoint' && draftLoop && controller.getState().mode === 'extreme' && originalStops.length) &&
-      (gestureKind !== 'insert' || draft.length > originalStops.length) &&
+      (gestureKind !== 'insert' || middleRailEdit(originalStops, insertAt!, nearest(e.clientX, e.clientY)) !== null) &&
       (gestureKind !== 'body' || draft.length > 1)) {
     const first = !controller.getState().lines.some(l => l.stops.length);
     const stops = gestureKind === 'endpoint' && draft.length < 2 ? [] : draft;
-    if (act({ type: 'route', line: gestureLine, stops, loop: draftLoop },
+    const action: Action = { type: 'route', line: gestureLine, stops, loop: draftLoop };
+    if ((gestureKind !== 'insert' || applyAction(copy(controller.getState()), action).ok) && act(action,
       gestureKind === 'insert' ? '拖动轨道接入新车站。' : '拖拽车站绘制线路。')) {
       redrawing = false;
       if (first) controller.setPaused(false);
@@ -2034,6 +2142,13 @@ stage.addEventListener('click', (e) => {
   }
 });
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && gesturePointer !== null) {
+    // Ignore the captured gesture's release click, but still run Escape's
+    // placement/redraw and panel cleanup below. A fresh press resets the guard.
+    suppressCreativeClick = true;
+    redrawing = false; placing = null;
+    clearGesture(); panning = null; e.preventDefault();
+  }
   if (e.key === 'Escape' && armedEndpoint) {
     disarmEndpoint();
     e.preventDefault();

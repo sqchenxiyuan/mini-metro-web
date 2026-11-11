@@ -365,6 +365,7 @@ export class MetroRenderer {
   private environment = new THREE.Group();
   private tracks = new THREE.Group();
   private preview = new THREE.Group();
+  private previewEdit: { line: number; lanes: Map<string, string> } | null = null;
   private stations = new Map<number, THREE.Group>();
   private trains = new Map<number, { group: THREE.Group; carriages: number; line: number; loadKey: string }>();
   private transfers = new THREE.Group();
@@ -462,6 +463,7 @@ export class MetroRenderer {
     this.camera.lookAt(this.center.x, 0, this.center.y);
   }
   resetCamera(): void {
+    this.clearPreview();
     this.manualCamera = false;
     this.frameKey = '';
     this.frameSize = { width: 19, height: 13 };
@@ -718,18 +720,6 @@ export class MetroRenderer {
     }
     if(this.riverTransform)this.setRiverTransform(this.riverTransform);
   }
-  private track(
-    a: Station,
-    b: Station,
-    color: string,
-    group: THREE.Group,
-    offset = 0,
-    ghost = false,
-  ): void {
-    const points = trackPoints(a, b);
-    for (let i = 1; i < points.length; i++)
-      this.trackPiece(points[i - 1], points[i], color, group, offset, ghost);
-  }
   private trackPiece(
     a: { x: number; y: number },
     b: { x: number; y: number },
@@ -746,7 +736,11 @@ export class MetroRenderer {
     if (ghost) {
       for (let d = 0; d < len; d += 0.5) {
         const t = (d + 0.12) / len;
-        const mark = box(0.07, 0.025, 0.25, color, a.x + dx * t + ox, 0.31, a.y + dz * t + oz);
+        // Keep occupied orphan rails legible but subordinate to active routes.
+        // Only paint/width changes: centers, headings and lifetime stay exact.
+        const mark = box(0.06, 0.025, 0.25,
+          new THREE.Color(color).lerp(new THREE.Color('#fff8f5'), .18),
+          a.x + dx * t + ox, 0.31, a.y + dz * t + oz);
         mark.rotation.y = Math.atan2(dx, dz);
         group.add(mark);
       }
@@ -835,17 +829,44 @@ export class MetroRenderer {
   }
   showPreview(s: State, stops: number[], line: number, valid = true): void {
     disposeGroup(this.preview);
-    for (let i = 1; i < stops.length; i++) {
-      const a = station(s, stops[i - 1]), b = station(s, stops[i]);
-      if (this.trackSource && this.riverTransform) {
-        const sourceA = station(this.trackSource, a.id), sourceB = station(this.trackSource, b.id);
-        this.drawLane(this.warpTrackPoints(trackPoints(sourceA, sourceB)),
-          0, 0.105, valid ? LINE_COLORS[line] : '#e75c58', this.preview, 0.43);
-      } else this.track(a, b, valid ? LINE_COLORS[line] : '#e75c58', this.preview, 0, true);
+    this.previewEdit = { line, lanes: new Map() };
+    const source = this.trackSource && this.riverTransform ? this.trackSource : s;
+    // Lay out the candidate as a route, not a chain of independent centerlines.
+    // This preserves canonical bends and the committed shared/branch lane slots.
+    const candidate = { ...source, lines: source.lines.map(item => item.id === line
+      ? { ...item, stops: [...stops], loop: false } : item) };
+    for (const edge of deriveTrackLayout(candidate).segments) {
+      const lane = edge.lanes.find(item => item.lineId === line);
+      if (!lane) continue;
+      const points = source === s ? edge.points : this.warpTrackPoints(edge.points);
+      this.previewEdit.lanes.set(`${edge.from}:${edge.to}`, this.railGeometryKey({ ...edge, points }, line));
+      this.drawLane(points, lane.offset, 0.105, valid ? LINE_COLORS[line] : '#e75c58', this.preview, 0.43,
+        edge.laneEndpoints?.find(item => item.lineId === line) ?? edge.endpointOffsets);
     }
+    this.updateRailEmphasis();
   }
   clearPreview(): void {
+    this.previewEdit = null;
+    this.updateRailEmphasis();
     disposeGroup(this.preview);
+  }
+  /** Editing changes rail paint only, never the layout used by trains or picks. */
+  private railGeometryKey(edge: TrackLayout['segments'][number], line: number): string {
+    const lane = edge.lanes.find(item => item.lineId === line)!;
+    return JSON.stringify(this.trackVertices(edge.points, lane.offset, 0.43,
+      edge.laneEndpoints?.find(item => item.lineId === line) ?? edge.endpointOffsets)
+      .map(point => [point.x, point.z]));
+  }
+  private updateRailEmphasis(): void {
+    for (const object of this.tracks?.children ?? []) {
+      if (!(object instanceof THREE.Mesh) || object.userData.lineId === undefined) continue;
+      const material = object.material as THREE.MeshStandardMaterial;
+      material.color.set(LINE_COLORS[object.userData.lineId]);
+      const edit = this.previewEdit;
+      if (edit && edit.line === object.userData.lineId &&
+        edit.lanes.get(object.userData.pair) !== object.userData.geometryKey)
+        material.color.lerp(new THREE.Color('#fff8f5'), .68);
+    }
   }
   private updateTransfers(s: State, _events?: readonly ServiceEvent[]): void {
     // Transfer ownership is authoritative in the rules. No visual sprite travels
@@ -854,6 +875,8 @@ export class MetroRenderer {
   }
   render(s: State, selectedLine = 0, events?: readonly ServiceEvent[],
     motion?: { previous: State | null; alpha: number }): void {
+    if (this.loadSnapshot && (s.seed !== this.loadSnapshot.seed || s.tick < this.loadSnapshot.tick))
+      this.clearPreview();
     if (this.loadSnapshot && s.tick < this.loadSnapshot.tick && !this.manualCamera) this.resetCamera();
     this.updateTransfers(s, events);
     if (this.city !== s.city) this.buildEnvironment(s.city);
@@ -946,9 +969,13 @@ export class MetroRenderer {
       this.trackLayout = this.visualTrackLayout(s);
       for (const edge of this.trackLayout.segments) {
         this.drawLane(edge.points, 0, 0.105, '#fffaf6', this.tracks, 0.20);
-        for (const lane of edge.lanes)
+        for (const lane of edge.lanes) {
           this.drawLane(edge.points, lane.offset, 0.105, LINE_COLORS[lane.lineId], this.tracks, 0.43,
             edge.laneEndpoints?.find((item) => item.lineId === lane.lineId) ?? edge.endpointOffsets);
+          const rail = this.tracks.children.at(-1);
+          if (rail) rail.userData = { lineId: lane.lineId, pair: `${edge.from}:${edge.to}`,
+            geometryKey: this.railGeometryKey(edge, lane.lineId) };
+        }
       }
       for (const orphan of ghostEdges) {
         // An orphan keeps its own original lane even if another line still
@@ -971,6 +998,7 @@ export class MetroRenderer {
           this.trackPiece({ x: vertices[i - 1].x, y: vertices[i - 1].z },
             { x: vertices[i].x, y: vertices[i].z }, LINE_COLORS[orphan.line], this.tracks, 0, true);
       }
+      this.updateRailEmphasis();
     }
     const trainIds = new Set(s.trains.map((t) => t.id));
     for (const [id, t] of this.trains)

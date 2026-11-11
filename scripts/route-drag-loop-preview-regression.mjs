@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
 import { browserLaunchOptions } from './browser-launch.mjs';
 
+await mkdir('/opt/data/cache/scratch/metro-acceptance', { recursive: true });
 const server = await createServer({ server: { host: '127.0.0.1', port: 0, hmr: false }, logLevel: 'error' });
 await server.listen();
 const browser = await chromium.launch(browserLaunchOptions({ ...process.env,
@@ -66,6 +68,25 @@ async function checkTip(page, anchor, pointer, label) {
   assert.ok(Math.hypot(tip.x2 - (pointer.x - rect.x), tip.y2 - (pointer.y - rect.y)) < 3, `${label}: tip follows the actual pointer between stations ${JSON.stringify({ tip, pointer, rect })}`);
   assert.ok(tip.stroke && tip.dash, `${label}: tip is a visibly painted dashed route`);
   return tip;
+}
+// Only unchanged-anchor loop cases take this detour. A straight handle chord
+// can cross its own station and legitimately retract it (covered below).
+async function loopDetour(page, from, to, stations, label) {
+  const box = await page.locator('#stage').boundingBox();
+  const clear = (a, b) => stations.every(s => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((s.x - a.x) * dx + (s.y - a.y) * dy) / (dx * dx + dy * dy)));
+    return Math.hypot(s.x - a.x - t * dx, s.y - a.y - t * dy) > 36;
+  });
+  const candidates = stations.flatMap(s => [48, 64, 88, 112].flatMap(radius =>
+    Array.from({ length: 24 }, (_, i) => ({ x: s.x + radius * Math.cos(i * Math.PI / 12),
+      y: s.y + radius * Math.sin(i * Math.PI / 12) }))));
+  const via = candidates.filter(p => p.x > box.x + 26 && p.x < box.x + box.width - 26 &&
+    p.y > box.y + 26 && p.y < box.y + box.height - 26 && clear(from, p) && clear(p, to))
+    .sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) + Math.hypot(to.x - a.x, to.y - a.y) -
+      Math.hypot(b.x - from.x, b.y - from.y) - Math.hypot(to.x - b.x, to.y - b.y))[0];
+  assert.ok(via, `${label}: station-clear loop approach exists`);
+  return via;
 }
 async function afterGesture(page, beforeHash, label, expected, stops = [1, 2, 3]) {
   assert.equal(await page.locator('[data-route-tip]').count(), 0, `${label}: transient tip clears`);
@@ -133,6 +154,12 @@ try {
       // An off-station point: inspect the actual painted preview BEFORE release.
       const midway = { x: anchor.x + (target.x - anchor.x) * .35,
         y: anchor.y + (target.y - anchor.y) * .35 };
+      if (kind === 'endpoint') {
+        const via = await loopDetour(page, start, midway, [a, b, c], `${width} ${mode} ${side}`);
+        await drag.move(via);
+        await checkTip(page, anchor, via, `${width} ${mode} ${side} station-clear approach`);
+        assert.equal(await hash(page), before, 'detour preview never mutates authoritative state');
+      }
       await drag.move(midway);
       const tip = await checkTip(page, anchor, midway, `${width} ${mode} ${kind} ${side} first mid-route`);
       if (touch && mode === 'normal' && kind === 'endpoint' && side === 'end')
@@ -153,6 +180,45 @@ try {
       await afterGesture(page, before, `${width} ${mode} ${kind} ${side ?? ''}`, mode === 'normal');
       console.log(`${width} ${touch ? 'CDP touch' : 'mouse'} ${mode} ${kind} ${side ?? ''}: loop/authority/continuous preview verified`);
     }
+    // Keep the original failing desktop chord, plus deliberate own-station
+    // crossings at BOTH ends with native touch. The tip follows the CURRENT
+    // retracted endpoint, never the unchanged authoritative route's endpoint.
+    for (const mode of ['normal', 'extreme']) for (const approach of ['own-end', 'own-start', ...(!touch ? ['chord-end'] : [])]) {
+      await reset(page, mode);
+      if (touch) {
+        for (let i = 0; i < 6; i++) await page.locator('#zoom-out').click();
+        const box = await page.locator('#stage').boundingBox(), prep = await gesture(page, true);
+        await prep.down({ x: box.x + box.width - 20, y: box.y + box.height * .72 });
+        await prep.move({ x: box.x + box.width - 120, y: box.y + box.height * .72 });
+        await prep.up(); await prep.close();
+      }
+      assert.equal((await route(page, [1, 2, 3])).ok, true);
+      const [a, b, c] = await stations(page), side = approach.endsWith('start') ? 'start' : 'end';
+      const own = side === 'start' ? a : c, target = side === 'start' ? c : a;
+      const before = await hash(page), drag = await gesture(page, touch);
+      await drag.down(await handle(page, side));
+      if (approach.startsWith('own')) {
+        await drag.move(own);
+        await checkTip(page, b, own, `${width} ${mode} ${approach} crosses own endpoint`);
+        assert.equal(await hash(page), before, 'own-endpoint crossing only previews retraction');
+      }
+      const midway = { x: own.x + (target.x - own.x) * .35, y: own.y + (target.y - own.y) * .35 };
+      await drag.move(midway);
+      const tip = await checkTip(page, b, midway, `${width} ${mode} ${approach} retracted mid-route`);
+      assert.equal(await page.locator('[data-route-retract]').count(), 1, 'crossing marks exactly the withdrawn endpoint rail');
+      assert.equal(await page.locator('[data-route-retract]').getAttribute('stroke'), mode === 'extreme' ? '#8d8a88' : '#e75c58',
+        'withdrawn rail distinguishes rule-invalid extreme retraction');
+      assert.ok(await paintedAt(page, { x: b.x + (midway.x - b.x) * .6,
+        y: b.y + (midway.y - b.y) * .6 }, tip.stroke), `${width} ${approach}: retracted tip visible in rendered pixels`);
+      const next = { x: own.x + (target.x - own.x) * .65, y: own.y + (target.y - own.y) * .65 };
+      await drag.move(next);
+      await checkTip(page, b, next, `${width} ${mode} ${approach} continuous retracted tip`);
+      assert.equal(await hash(page), before, 'retracted preview never mutates authority');
+      await drag.cancel(); if (!touch) await drag.up(); await drag.close();
+      await afterGesture(page, before, `${width} ${mode} ${approach} cancel`, false);
+      assert.equal(await page.locator('[data-route-retract]').count(), 0, 'cancel clears withdrawal marks');
+      console.log(`${width} ${touch ? 'CDP touch' : 'mouse'} ${mode} ${approach}: retracted anchor/pixels/cancel authority verified`);
+    }
     // Hovering the closing station must not latch a loop after moving away,
     // including blank space, the last stop, and an interior station.
     for (const kind of ['body', 'endpoint']) for (const destination of ['blank', 'current', 'interior']) {
@@ -167,9 +233,18 @@ try {
       const [a, b, c] = await stations(page);
       if (kind === 'endpoint') assert.equal((await route(page, [1, 2, 3])).ok, true);
       const before = await hash(page), drag = await gesture(page, touch);
-      await drag.down(kind === 'body' ? a : await handle(page, 'end'));
+      const start = kind === 'body' ? a : await handle(page, 'end');
+      await drag.down(start);
       if (kind === 'body') { await drag.move(b); await drag.move(c); }
+      else {
+        const midway = { x: c.x + (a.x - c.x) * .35, y: c.y + (a.y - c.y) * .35 };
+        const via = await loopDetour(page, start, midway, [a, b, c], `${width} endpoint deactivation ${destination}`);
+        await drag.move(via); await checkTip(page, c, via, `${width} deactivation station-clear approach`);
+        await drag.move(midway); await checkTip(page, c, midway, `${width} deactivation continuous approach`);
+      }
       await drag.move(a);
+      await checkTip(page, c, a, `${width} ${kind} reaches closing station before deactivation`);
+      assert.equal(await hash(page), before, 'loop closure remains transient before leaving closing station');
       const away = await page.evaluate(({ a, b, c }) => {
         const box = document.querySelector('#stage').getBoundingClientRect();
         for (const dx of [65, -65, 85, -85]) for (const dy of [0, 45, -45]) {
@@ -182,16 +257,19 @@ try {
       const release = destination === 'current' ? c : destination === 'interior' ? b : away;
       if (destination === 'blank') await drag.move(release);
       else await drag.moveDirect(release);
-      if (destination !== 'interior') await checkTip(page, c, release,
+      const retracts = destination === 'interior' || kind === 'endpoint' && destination === 'current';
+      if (destination !== 'interior') await checkTip(page, retracts ? b : c, release,
         `${width} ${kind} leaves closing station for ${destination}`);
       else assert.equal(await page.locator('[data-route-tip]').count(), 1,
         'interior hover still has a visual route tip');
+      assert.equal(await hash(page), before, 'deactivated loop/retraction preview never mutates authority');
       await drag.up(); await drag.close();
       const line = (await state(page)).lines[0];
       assert.equal(line.loop, false, `${width} ${kind}: leaving closing station for ${destination} must not commit a loop`);
-      assert.deepEqual(line.stops, destination === 'interior' ? [1, 2] : [1, 2, 3]);
-      if (kind === 'endpoint' && destination !== 'interior')
+      assert.deepEqual(line.stops, retracts ? [1, 2] : [1, 2, 3]);
+      if (kind === 'endpoint' && destination === 'blank')
         assert.equal(await hash(page), before, 'rejected endpoint hover cannot mutate state');
+      if (retracts) assert.notEqual(await hash(page), before, 'release commits the visited-station retraction, not a loop');
       assert.equal(await page.locator('[data-route-tip]').count(), 0);
     }
     // Pointer cancel must remove the same visual, without submitting a route.

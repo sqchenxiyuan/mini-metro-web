@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease } from '../src/route-gestures';
+import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease, paintedRailOwner, middleRailEdit } from '../src/route-gestures';
 import { advance, applyAction, createState, hash } from '../src/rules';
 import type { State } from '../src/types';
 
@@ -10,7 +10,28 @@ function population(s: State): number {
 
 const stops = [1, 2, 3];
 describe('route gesture decisions', () => {
+  it('owns the nearest painted lane rather than the selected or first matching line', () => {
+    const distances = new Map([[0, 8], [1, 1.5], [2, 30]]);
+    const hit = (line: number, radius: number) => distances.get(line)! < radius ? 2 : null;
+    expect(paintedRailOwner([0, 1, 2], hit)).toEqual({ line: 1, edge: 2 });
+    expect(paintedRailOwner([2], hit)).toBeNull();
+    expect(paintedRailOwner([1, 0], () => 1)).toEqual({ line: 0, edge: 1 }); // Stable coincident tie.
+    expect(paintedRailOwner([0, 1], () => 1, 12, 1)).toEqual({ line: 1, edge: 1 });
+    expect(paintedRailOwner([0, 1], hit, 12, 0)).toEqual({ line: 1, edge: 2 });
+  });
+  it('derives one middle edit from the grabbed edge, never the prior hover draft', () => {
+    expect(middleRailEdit([1, 2, 3, 4], 2, 5)).toEqual({ stops: [1, 2, 5, 3, 4], kind: 'insert' });
+    expect(middleRailEdit([1, 2, 3, 4], 2, 2)).toEqual({ stops: [1, 3, 4], kind: 'remove' });
+    expect(middleRailEdit([1, 2, 3, 4], 2, 3)).toEqual({ stops: [1, 2, 4], kind: 'remove' });
+    expect(middleRailEdit([1, 2, 3, 4], 1, 3)).toBeNull();
+    expect(middleRailEdit([1, 2, 3, 4], 1, 1)).toBeNull();
+    expect(middleRailEdit([1, 2], 1, null)).toBeNull();
+    expect(middleRailEdit([1, 2], 0, 5)).toBeNull();
+    expect(middleRailEdit([1, 2], 2, 5)).toBeNull();
+  });
   it('extends the original line from either distinct outside endpoint', () => {
+    expect(middleRailEdit(stops, 3, 4, true)).toEqual({ stops: [1, 2, 3, 4], kind: 'insert' });
+    expect(middleRailEdit(stops, 1, 2, true)).toBeNull();
     expect(extensionStops(stops, 'start', [4, 5])).toEqual([5, 4, 1, 2, 3]);
     expect(extensionStops(stops, 'end', [4, 5])).toEqual([1, 2, 3, 4, 5]);
     expect(extensionStops(stops, 'start', [2])).toBeNull();

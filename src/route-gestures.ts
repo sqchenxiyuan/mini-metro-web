@@ -2,6 +2,44 @@
 export type Point = { x: number; y: number };
 export type Bounds = { left: number; top: number; right: number; bottom: number };
 
+/** Resolve ownership against the renderer's painted geometry, never selection.
+ * Narrow the existing radius-only hit API instead of duplicating lane geometry.
+ */
+export function paintedRailOwner(
+  lines: readonly number[], hit: (line: number, radius: number) => number | null, radius = 12, selected?: number,
+): { line: number; edge: number } | null {
+  let result: { line: number; edge: number } | null = null, best = radius + 1;
+  for (const line of [...lines].sort((a, b) => a - b)) {
+    let edge = hit(line, radius);
+    if (edge === null) continue;
+    let low = 0, high = radius;
+    for (let i = 0; i < 10; i++) {
+      const middle = (low + high) / 2, closer = hit(line, middle);
+      if (closer === null) low = middle;
+      else { high = middle; edge = closer; }
+    }
+    if (high < best - .02 || Math.abs(high - best) <= .02 && line === selected) {
+      best = high; result = { line, edge };
+    }
+  }
+  return result;
+}
+
+/** Always derive from pointer-down topology, never the previous hovered draft. */
+export function middleRailEdit(
+  stops: readonly number[], edge: number, target: number | null, loop = false,
+): { stops: number[]; kind: 'insert' | 'remove' } | null {
+  if (target === null || edge < 1 || edge > stops.length - (loop ? 0 : 1)) return null;
+  const index = stops.indexOf(target);
+  if (index < 0) {
+    const draft = [...stops]; draft.splice(edge, 0, target);
+    return { stops: draft, kind: 'insert' };
+  }
+  if (!loop && index > 0 && index < stops.length - 1 && (index === edge - 1 || index === edge))
+    return { stops: stops.filter((_, i) => i !== index), kind: 'remove' };
+  return null;
+}
+
 /** The edge index is the insertion position returned by the visible-lane hit test. */
 export function breakLoopEdge(stops: readonly number[], edge: number): number[] | null {
   if (stops.length < 3 || edge < 1 || edge > stops.length) return null;
