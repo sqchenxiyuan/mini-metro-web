@@ -63,6 +63,11 @@ export function removedRouteEdges(original: readonly number[], draft: readonly n
   return removed;
 }
 
+/** New draft stations re-arm on exit; original backtracking stays latched. */
+export function routeVisit(last: number | null, hit: number | null, original: readonly number[]): number | null {
+  return hit ?? (last !== null && original.includes(last) ? last : null);
+}
+
 /** One visited station per move; never erase unvisited intermediate stops. */
 export function endpointStep(
   original: readonly number[], side: 'start' | 'end', current: readonly number[], id: number,

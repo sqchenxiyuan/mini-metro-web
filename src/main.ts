@@ -11,7 +11,7 @@ import type { EndpointHandle } from './endpoint-geometry';
 import { layoutSceneCues } from './overlay-layout';
 import { creativeStationPicker } from './station-picker';
 import { Mobile3DRenderer } from './mobile-3d';
-import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease, paintedRailOwner, middleRailEdit } from './route-gestures';
+import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease, paintedRailOwner, middleRailEdit, routeVisit } from './route-gestures';
 import { MetroAudio } from './audio';
 import { observeState } from './session';
 import {
@@ -449,6 +449,7 @@ let gestureTarget: number | null = null;
 let gestureKind: 'body' | 'endpoint' | 'insert' | 'loop' | null = null;
 let endpointSide: 'start' | 'end' = 'end';
 let endpointVisited: number | null = null;
+let bodyVisited: number | null = null;
 let loopEdge: number | null = null;
 let gesturePointer: number | null = null;
 let loopPoint = { x: 0, y: 0 };
@@ -718,6 +719,7 @@ function paintHandles(): void {
 function clearGesture(): void {
   draft = null; insertAt = null; pointerStation = null; gestureLine = null;
   gestureKind = null; loopEdge = null; endpointVisited = null; gesturePointer = null; gestureTarget = null;
+  bodyVisited = null;
   renderer.clearPreview();
   clearSnap();
   handleLayer.querySelectorAll('[data-route-retract]').forEach(node => node.remove());
@@ -833,6 +835,7 @@ stage.addEventListener('pointerdown', (e) => {
     return;
   }
   gestureKind = 'body'; insertAt = null;
+  bodyVisited = id;
   $('station-peek').hidden = true;
   selectedStation = id;
   draftLoop = false;
@@ -923,11 +926,12 @@ stage.addEventListener('pointermove', (e) => {
     // must not count as crossing the endpoint.
     if (!moved) return;
     if (id === null) {
+      endpointVisited = routeVisit(endpointVisited, id, originalStops);
       if (draftLoop) { draftLoop = false; endpointVisited = null; preview(); }
       drawRouteTip(e); return;
     }
-    // Remain latched to the last visited station through blank space when
-    // backtracking, but allow a disarmed loop closure to re-arm on re-entry.
+    // Original stops stay latched through blank space; newly added stations
+    // re-arm only after exiting their hit so a second crossing retracts them.
     if (id === endpointVisited) { drawRouteTip(e); return; }
     const own = endpointSide === 'start' ? originalStops[0] : originalStops.at(-1)!;
     // Crossing the offset handle's own station previews a retraction, but a
@@ -949,8 +953,17 @@ stage.addEventListener('pointermove', (e) => {
     drawRouteTip(e);
     return;
   }
-  if (id === null || id === draft.at(-1)) {
+  const repeated = id !== null && id === bodyVisited;
+  bodyVisited = routeVisit(bodyVisited, id, [pointerStation!]);
+  if (id === null) {
+    if (draftLoop) { draftLoop = false; bodyVisited = null; preview(); }
+    drawRouteTip(e); return;
+  }
+  if (repeated) { drawRouteTip(e); return; }
+  if (id === draft.at(-1)) {
+    // Leaving a loop closure for its current end only disarms the loop.
     if (draftLoop) { draftLoop = false; preview(); }
+    else if (draft.length > 1) { draft.pop(); preview(); }
     drawRouteTip(e); return;
   }
 

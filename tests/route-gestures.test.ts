@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease, paintedRailOwner, middleRailEdit } from '../src/route-gestures';
+import { breakLoopEdge, endpointStep, extensionStops, removedRouteEdges, safeLoopRelease, paintedRailOwner, middleRailEdit, routeVisit } from '../src/route-gestures';
 import { advance, applyAction, createState, hash } from '../src/rules';
 import type { State } from '../src/types';
 
@@ -73,6 +73,27 @@ describe('route gesture decisions', () => {
     expect(endpointStep(stops, 'end', [1, 2], 3)).toEqual({ stops, loop: false });
     expect(endpointStep([1, 2, 3, 4], 'end', [1, 2, 3, 4], 2)).toBeNull();
     expect(endpointStep([1, 2, 3, 4], 'start', [1, 2, 3, 4], 3)).toBeNull();
+  });
+  it('re-arms newly drawn stations only after leaving their hit, but keeps original backtracking latched', () => {
+    let visited: number | null = null;
+    const original = [1, 2];
+    const visit = (id: number | null) => {
+      const repeated = id !== null && id === visited;
+      visited = routeVisit(visited, id, original);
+      return repeated;
+    };
+    expect(visit(3)).toBe(false); // Add new C.
+    expect(visit(3)).toBe(true); // Jitter inside C.
+    visit(null);
+    expect(visit(3)).toBe(false); // Exit and re-enter: remove C.
+    expect(visit(3)).toBe(true); // Remain inside: cannot add it back yet.
+    visit(null);
+    expect(visit(3)).toBe(false); // Third entry can add it again.
+    expect(visit(2)).toBe(false);
+    visit(null);
+    expect(visit(2)).toBe(true); // Original stop remains latched through blank.
+    expect(visit(1)).toBe(false);
+    expect(visit(2)).toBe(false); // Visiting another station permits reversal.
   });
   it('clears the last segment through the route rule, retiring trains without losing riders', () => {
     const s = createState({ seed: 420, mode: 'normal' });
