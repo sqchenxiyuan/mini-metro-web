@@ -42,7 +42,10 @@ try {
     const r=h.rect,s=sample.stage;
     if(r.width<44||r.height<44||r.x<s.x||r.y<s.y||r.x+r.width>s.x+s.width||r.y+r.height>s.y+s.height)collisions.push([h.name,'out-of-stage']);
     for(const station of sample.stations)if(intersect(r,station.rect))collisions.push([h.name,`station ${station.id}`]);
-    for(const queue of sample.queues)if(intersect(r,queue.rect))collisions.push([h.name,`queue ${queue.id}`]);
+    // Waiting queues intentionally may overlap a 44px endpoint hit rectangle.
+    // endpoint-passenger-independence-verify.mjs proves fixed centers/identities,
+    // actual queue-over-cap pixels and native exact-line drags at that overlap.
+    // Stations, peers, parked train badges and UI remain forbidden below.
     for(const other of sample.handles)if(other!==h&&h.name<other.name&&intersect(r,other.rect))collisions.push([h.name,other.name]);
     for(const train of sample.trains)if(intersect(r,train.rect))collisions.push([h.name,`train ${train.id}`]);
     for(const control of sample.controls)if(intersect(r,control.rect))collisions.push([h.name,control.name]);

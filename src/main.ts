@@ -505,22 +505,8 @@ function layoutHandles(): Map<string, { x: number; y: number }> {
     blocked.push({ left: x - badgeWidth / 2 - badgeSlack, right: x + badgeWidth / 2 + badgeSlack,
       top: y - groupHeight * 1.55 - badgeSlack, bottom: y - groupHeight * 0.55 + badgeSlack });
   }
-  if (renderer instanceof Mobile3DRenderer) {
-    const stats = renderer.mapStats();
-    for (const p of stats.bounds) if (p.pile) {
-      const anchor = lastState.stations.find(s => s.id === p.id);
-      if (!anchor) continue;
-      const point = renderer.project(anchor.x, anchor.y, 0.6);
-      const pile = p.pile;
-      blocked.push({left: bounds.left + point.x - pile.width * stats.zoom / 2,
-        right: bounds.left + point.x + pile.width * stats.zoom / 2,
-        top: bounds.top + point.y + 42 * stats.zoom,
-        bottom: bounds.top + point.y + (42 + pile.height) * stats.zoom});
-    }
-  } else for (const cue of renderer.cueStats().bounds) {
-    if (cue.kind === 'queue') blocked.push({left: bounds.left + cue.x, top: bounds.top + cue.y,
-      right: bounds.left + cue.x + cue.width, bottom: bounds.top + cue.y + cue.height});
-  }
+  // Waiting passengers float above the 3D controls; their changing queues must
+  // not reserve endpoint slots. Stations, parked badges, UI and peers still do.
   const fits = (x: number, y: number): boolean => {
     const box = { left: x - handleSize / 2, top: y - handleSize / 2,
       right: x + handleSize / 2, bottom: y + handleSize / 2 };

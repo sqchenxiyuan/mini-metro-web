@@ -5,7 +5,7 @@ import { browserLaunchOptions } from './browser-launch.mjs';
 
 // Observe the actual static obstacle boxes from layoutHandles, not a copy of
 // its reservation formula. This probe does not modify production source.
-const reservationMarker = '  if (renderer instanceof Mobile3DRenderer) {\n    const stats = renderer.mapStats();';
+const reservationMarker = '  const fits = (x: number, y: number): boolean => {';
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'error',
   plugins: [{ name: 'badge-reservation-probe', enforce: 'pre', transform(code, id) {
     if (!id.endsWith('/src/main.ts')) return;
