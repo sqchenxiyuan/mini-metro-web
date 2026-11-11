@@ -1204,12 +1204,12 @@ input, select { accent-color: #a383bd; }
   outline: 3px solid #362642;
   outline-offset: 2px;
 }
-/* Preserve legacy geometry centers; only the T is painted. */
+/* Preserve legacy geometry centers. The visible T is a lit WebGL extrusion. */
 [data-route-handle] {
   opacity: 0;
   pointer-events: none;
 }
-[data-endpoint-cap] { fill: none; stroke-width: 5px; stroke-linecap: round; pointer-events: none; filter: drop-shadow(0 1px 1px #fffaf6); }
+[data-endpoint-cap] { visibility: hidden; fill: none; stroke: none; pointer-events: none; }
 .route-feedback { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; overflow: hidden; pointer-events: none; }
 [data-route-snap] { fill: none; stroke: var(--line); stroke-width: 2px; opacity: .7; pointer-events: none; animation: route-snap 360ms ease-out both; }
 @keyframes route-snap { from { opacity: .8; stroke-width: 3px; } to { opacity: 0; stroke-width: 1px; } }

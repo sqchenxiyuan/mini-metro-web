@@ -2,8 +2,12 @@
 import './style.css';
 import './minimal.css';
 import './mobile-map.css';
+import './resource-ui.css';
+import { installResourceDrag } from './resource-drag';
+import { createResourceUI } from './resource-ui';
 import { MetroController } from './browser';
 import { hitTestVisibleLane, MetroRenderer, stationOutline } from './renderer';
+import type { EndpointHandle } from './endpoint-geometry';
 import { layoutSceneCues } from './overlay-layout';
 import { creativeStationPicker } from './station-picker';
 import { Mobile3DRenderer } from './mobile-3d';
@@ -23,7 +27,6 @@ import {
   stationCapacity,
   trackPoints,
   trackPosition,
-  tunnelsUsed,
 } from './rules';
 import type { Action, City, Mode, Options, Replay, Shape, State } from './types';
 
@@ -82,10 +85,10 @@ app.innerHTML = `
     </section>
   </aside>
 </main>
-<footer class="transport-bar"><div class="transport-controls"><button id="play-pause" class="play-button" aria-label="播放或暂停">▶</button><div class="speed-switch" aria-label="运行速度"><button data-speed="1" class="active" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button><button data-speed="4" aria-pressed="false">4×</button></div></div><div id="resources" class="resources" aria-label="剩余调度资源"></div><div class="day-progress"><span id="day-clock">星期一</span><div><i id="day-fill"></i></div><span id="clock">00:00</span></div><div class="footer-right"><span id="control-label">手动规划</span><button id="sound" class="icon-button" title="声音开关">♫</button></div></footer>
+<footer class="transport-bar"><div class="transport-controls"><button id="resource-toggle" type="button" aria-label="打开调度资源；拖动机车和车厢" aria-expanded="false" aria-controls="resources">物资</button><button id="play-pause" class="play-button" aria-label="播放或暂停">▶</button><div class="speed-switch" aria-label="运行速度"><button data-speed="1" class="active" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button><button data-speed="4" aria-pressed="false">4×</button></div></div><div id="resources" class="resources" aria-label="剩余调度资源"></div><div class="day-progress"><span id="day-clock">星期一</span><div><i id="day-fill"></i></div><span id="clock">00:00</span></div><div class="footer-right"><span id="control-label">手动规划</span><button id="sound" class="icon-button" title="声音开关">♫</button></div></footer>
 <dialog id="queue-browser" aria-label="各站候车目的地"><div id="queue-browser-content"></div><button id="queue-focus-station" type="button">定位车站</button><button id="queue-focus-pile" type="button">定位候车</button><button id="queue-browser-close" type="button">关闭</button></dialog>
 <dialog id="settings-dialog"><form id="settings-form"><span class="eyebrow">LET'S BUILD A LITTLE CITY</span><h2>开始一段新旅程</h2><label>目的地<select id="city-select"><option value="orchard">河湾新城 · 蜿蜒的单河城市</option><option value="harbor">东岸港湾 · 城市东侧的河湾</option><option value="islands">双子群岛 · 两条河流，三片陆地</option></select></label><label>模式<select id="mode-select"><option value="normal">经典 · 拥挤过久将结束旅程</option><option value="endless">无尽 · 保留需求，没有拥挤失败</option><option value="extreme">极限 · 线路只能从端点延长</option><option value="creative">创意 · 充足资源，可手动建站</option></select></label><label>地图种子<input id="seed-input" type="number" min="0" max="4294967295" value="420"/></label><div class="button-pair"><button type="button" id="settings-cancel">再逛一会儿</button><button class="primary" type="submit">出发 ↗</button></div></form></dialog>
-<dialog id="help-dialog"><span class="eyebrow">A POCKET GUIDE</span><h2>地铁乘车指南</h2><ol><li>乘客的形状就是目的地。把不同形状的车站连起来；列车会自动接送和换乘。</li><li>拖车站本体到另一站可新建可用线路，即使车站已有线路也一样；不依赖当前选线。可以连续拖过多站。</li><li>开放线路首尾的同色手柄分别用于向前、向后延长原线路。键盘可先激活手柄，再选目标车站；Escape 取消。拖回起点可闭合环线。</li><li>把环线的一段轨道拉离原位，在安全空白处松开可断开该段；短拉或松在车站、其它轨道上不会修改线路。右键车站可将它移出当前线路。</li><li>点击线路、列车或可扩建站会显示当前可用操作：派车、车厢、扩建等。</li><li>每段跨河连接消耗隧道。车站超过 6 人开始计时，持续 45 秒将结束旅程；减少到 6 人以下，计时会逐渐恢复。枢纽容量为 18 人。</li><li>空格暂停，1–7 选线。每周免费获得一台机车，再选一项补给。可随时暂停规划。</li><li>游戏结束后可以查看旅程回放；普通游玩时不会显示回放工具。AI 集成页可导入、导出和定位回放时间。</li>${integrationSurface ? '<li>AI 集成页可读取完整结构化状态并连接外部 Agent；它并非只看屏幕的视觉 AI。</li>' : ''}</ol><p class="muted">Mini Metro 核心玩法的独立重建；3 张原创地图、原创程序化画面与音效。原版城市数据及精确节奏未对齐，验证边界见随附 FIDELITY.md。</p><button id="help-close" class="primary full">开始规划</button></dialog>
+<dialog id="help-dialog"><span class="eyebrow">A POCKET GUIDE</span><h2>地铁乘车指南</h2><ol><li>乘客的形状就是目的地。把不同形状的车站连起来；列车会自动接送和换乘。</li><li>拖车站本体到另一站可新建可用线路，即使车站已有线路也一样；不依赖当前选线。可以连续拖过多站。</li><li>开放线路首尾的同色手柄分别用于向前、向后延长原线路。键盘可先激活手柄，再选目标车站；Escape 取消。拖回起点可闭合环线。</li><li>把环线的一段轨道拉离原位，在安全空白处松开可断开该段；短拉或松在车站、其它轨道上不会修改线路。右键车站可将它移出当前线路。</li><li>物资栏的机车可直接拖到彩色轨道，在预览标出的就近车站出库；不是任意轨道位置投放。沿轨道移动选择方向，端点自动向内。车厢拖到列车本体或轨道，会标明实际加挂的列车。松开才扣资源，空白处或 Escape 取消。</li><li>键盘：物资按钮按 Enter 进入放置，方向键循环预览车站或列车，再按 Enter 确认；也可 Tab 到地图车站/列车后按 Enter。不会自动投放到当前选线。点击线路、列车或可扩建站仍可使用原有操作。</li><li>每段跨河连接消耗隧道。车站超过 6 人开始计时，持续 45 秒将结束旅程；减少到 6 人以下，计时会逐渐恢复。枢纽容量为 18 人。</li><li>空格暂停，1–7 选线。每周免费获得一台机车，再选一项补给。可随时暂停规划。</li><li>游戏结束后可以查看旅程回放；普通游玩时不会显示回放工具。AI 集成页可导入、导出和定位回放时间。</li>${integrationSurface ? '<li>AI 集成页可读取完整结构化状态并连接外部 Agent；它并非只看屏幕的视觉 AI。</li>' : ''}</ol><p class="muted">Mini Metro 核心玩法的独立重建；3 张原创地图、原创程序化画面与音效。原版城市数据及精确节奏未对齐，验证边界见随附 FIDELITY.md。</p><button id="help-close" class="primary full">开始规划</button></dialog>
 <dialog id="decision-dialog"><span class="eyebrow">AT THE MOMENT OF DECISION</span><h2>决策现场</h2><div id="decision-content"></div><button id="decision-close" class="primary full">返回旅程</button></dialog>
 <dialog id="observation-dialog"><h2>Agent 当前观察</h2><p>这是实际接口的完整 JSON。包含内部状态，并非只看屏幕。HTTP 回复 action，游戏校验并执行。</p><pre id="observation-json"></pre><button id="observation-close" class="primary full">关闭</button></dialog>`;
 
@@ -182,6 +185,8 @@ function act(action: Action, reason: string): boolean {
   }
 }
 function resetView(): void {
+  resourceDrag.cancel();
+  setResourceTray(false);
   mobileCameraSnapshot = null;
   hideContext();
   setLineChooser(false);
@@ -607,6 +612,7 @@ function snapStation(id: number | null, valid: boolean): void {
 }
 function paintHandles(): void {
   const rect = stage.getBoundingClientRect();
+  const endpointCaps: EndpointHandle[] = [];
   const draggedTip = handleLayer.querySelector('[data-loop-tip]');
   const routeTip = handleLayer.querySelector('[data-route-tip]');
   const middleTip = handleLayer.querySelector('[data-middle-tip]');
@@ -669,8 +675,10 @@ function paintHandles(): void {
     const line = controller.getState().lines[lineId];
     const stationId = side === 'start' ? line.stops[0] : line.stops.at(-1);
     const station = lastState.stations.find(s => s.id === stationId);
+    const center = { x: p.x - rect.left, y: p.y - rect.top };
+    const owner = station ? renderer.project(station.x, station.y, .6) : { x: center.x - 1, y: center.y };
+    endpointCaps.push({ key, line: lineId, ...center, owner });
     if (station) {
-      const owner = renderer.project(station.x, station.y, 0.6);
       const link = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       link.setAttribute('data-handle-link', key);
       link.setAttribute('x1', String(owner.x)); link.setAttribute('y1', String(owner.y));
@@ -685,9 +693,8 @@ function paintHandles(): void {
     circle.setAttribute('stroke', '#fff'); circle.setAttribute('stroke-width', '2');
     circle.setAttribute('data-route-handle', key);
     handleLayer.append(circle);
-    const center = { x: p.x - rect.left, y: p.y - rect.top };
-    const owner = station ? renderer.project(station.x, station.y, .6) : { x: center.x - 1, y: center.y };
     const angle = Math.atan2(center.y - owner.y, center.x - owner.x);
+    // Inert inspection metadata only. The visible T is a lit solid in WebGL.
     const cap = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     cap.setAttribute('data-endpoint-cap', key);
     cap.setAttribute('d', 'M -10 0 L 5 0 M 5 -9 L 5 9');
@@ -695,6 +702,7 @@ function paintHandles(): void {
     cap.setAttribute('stroke', LINE_COLORS[lineId]);
     handleLayer.append(cap);
   }
+  renderer.setEndpointHandles(endpointCaps, true, paintHandles);
   for (const [key, button] of endpointButtons) if (!visible.has(key)) {
     button.remove(); endpointButtons.delete(key);
     // A keyboard-armed endpoint can leave the viewport while the user pans to
@@ -765,7 +773,7 @@ function nearbyRail(x: number, y: number): { line: number; edge: number } | null
         renderer.getPaintedTrackLayout() ?? undefined), 12, controller.selectedLine);
 }
 stage.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || controller.mode === 'replay' || gesturePointer !== null) return;
+  if (resourceDrag.active || e.button !== 0 || controller.mode === 'replay' || gesturePointer !== null) return;
   suppressCreativeClick = false;
   const targetHandle = (e.target as Element).closest<HTMLButtonElement>('.endpoint-handle');
   const targetKey = targetHandle && [...endpointButtons].find(([, button]) => button === targetHandle)?.[0];
@@ -835,6 +843,7 @@ stage.addEventListener('pointerdown', (e) => {
   uiAt = 0;
 });
 stage.addEventListener('pointermove', (e) => {
+  if (resourceDrag.active) return;
   if (gesturePointer !== null && e.pointerId !== gesturePointer) return;
   if (pointerStation !== null && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 8)
     moved = true;
@@ -1079,6 +1088,7 @@ stage.addEventListener('click', (e) => {
   }
 });
 stage.addEventListener('pointerup', (e) => {
+  if (resourceDrag.active) return;
   if (gesturePointer !== null && e.pointerId !== gesturePointer) return;
   panning = null;
   finishDraw(e);
@@ -1092,7 +1102,7 @@ stage.addEventListener('pointercancel', () => {
 const pinchPointers = new Map<number, { x: number; y: number }>();
 let pinchBaseline: { distance: number; zoom: number } | null = null;
 stage.addEventListener('pointerdown', e => {
-  if (!mobileMap || e.pointerType !== 'touch') return;
+  if (resourceDrag.active || !mobileMap || e.pointerType !== 'touch') return;
   pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pinchPointers.size === 2) {
     panning = null;
@@ -1223,6 +1233,7 @@ function update(): void {
   lastState = s;
   $('creative-picker').hidden = integrationSurface || s.mode !== 'creative' || controller.mode === 'replay';
   renderer.render(s, controller.selectedLine, events, motion);
+  resourceDrag.refresh();
   if (mobileMap) syncMobileCameraTargets();
   if (!integrationSurface) {
     $('train-detail').hidden = true;
@@ -1506,9 +1517,7 @@ function update(): void {
       )
       .join('');
   }
-  $('resources').innerHTML =
-    `<div><span>▰ 机车</span><b>${s.resources.locomotives}</b></div><div><span>▱ 车厢</span><b>${s.resources.carriages}</b></div><div><span>⌒ 隧道</span><b>${s.resources.tunnels - tunnelsUsed(s)}<small> / ${s.resources.tunnels}</small></b></div><div><span>✦ 枢纽</span><b>${s.resources.interchanges}</b></div>`;
-  $('inspector-resources').innerHTML = $('resources').innerHTML;
+  resourceUI.update(s, controller.mode === 'replay', resourceDrag.kind);
   const first = !s.lines.some((l) => l.stops.length);
   $('map-hint').hidden = !first || controller.mode === 'replay';
   const p = s.stations.find((p) => p.id === selectedStation),
@@ -1589,6 +1598,61 @@ function update(): void {
         `<div class="supply-stamp">♧</div><span class="eyebrow">THANK YOU FOR THE JOURNEY</span><h2>小镇需要休息一会儿。</h2><p>${s.lostStation} 站拥挤过久。这段旅程共送达</p><strong class="final-score">${s.score}<small> 位乘客</small></strong><div class="button-pair"><button id="over-replay">回看这段旅程</button><button id="over-restart" class="primary">相同种子重试 ↗</button><button id="over-new-seed">新种子开局</button></div>`;
   }
 }
+const resourceUI = createResourceUI($('resources'), $('inspector-resources'));
+const resourceDrag = installResourceDrag({
+  stage, tray: $('resources'), state: () => controller.getState(), replay: () => controller.mode === 'replay',
+  geometry: {
+    railAt: point => nearbyRail(point.x, point.y),
+    railVector: (point, hit) => {
+      const s = controller.getState(), line = s.lines.find(l => l.id === hit.line);
+      if (!line) return null;
+      const from = line.stops[(hit.edge - 1) % line.stops.length], to = line.stops[hit.edge % line.stops.length];
+      const edge = renderer.getPaintedTrackLayout()?.segments.find(e => e.from === Math.min(from, to) && e.to === Math.max(from, to));
+      if (!edge) return null;
+      const rect = stage.getBoundingClientRect();
+      const points = edge.points.map(p => renderer instanceof Mobile3DRenderer
+        ? renderer.projectTrackPoint(p.x, p.y, .43) : renderer.project(p.x, p.y, .43));
+      let best = Infinity, vector: {x:number;y:number} | null = null;
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i-1], b = points[i], dx = b.x-a.x, dy = b.y-a.y;
+        const t = Math.max(0, Math.min(1, ((point.x-rect.left-a.x)*dx + (point.y-rect.top-a.y)*dy) / Math.max(1, dx*dx+dy*dy)));
+        const d = Math.hypot(point.x-rect.left-a.x-dx*t, point.y-rect.top-a.y-dy*t);
+        if (d < best) { best = d; vector = {x:dx*(from<to?1:-1), y:dy*(from<to?1:-1)}; }
+      }
+      return vector;
+    },
+    stationPoint: id => {
+      const p = controller.getState().stations.find(s => s.id === id);
+      if (!p) return null;
+      const q = renderer.project(p.x, p.y, .6), rect = stage.getBoundingClientRect();
+      return { x: rect.left + q.x, y: rect.top + q.y };
+    },
+    trainPoint: id => {
+      const p = renderer.projectTrain(id), rect = stage.getBoundingClientRect();
+      return p ? { x: rect.left + p.x, y: rect.top + p.y } : null;
+    },
+    contains: point => {
+      const r = stage.getBoundingClientRect();
+      return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
+    },
+  },
+  commit: action => act(action, action.type === 'addTrain' ? '从库存拖动机车，在预览车站出库。' : '从库存拖动车厢，给预览列车加挂。'),
+  routeBusy: () => gesturePointer !== null || pinchPointers.size > 0,
+  clearOtherGestures: () => {
+    clearGesture(); disarmEndpoint(); panning = null; redrawing = false; placing = null;
+    pinchPointers.clear(); pinchBaseline = null;
+    suppressCreativeClick = true; paintHandles();
+  },
+  changed: () => { uiAt = 0; },
+});
+function setResourceTray(open: boolean): void {
+  if (open) hideContext();
+  document.body.classList.toggle('resource-tray-open', open);
+  $('resource-toggle').setAttribute('aria-expanded', String(open));
+  $('resource-toggle').textContent = open ? '返回' : '物资';
+  if (!open) resourceDrag.cancel();
+}
+$('resource-toggle').onclick = () => setResourceTray(!$('resource-toggle').matches('[aria-expanded="true"]'));
 controller.onChange = update;
 controller.capture = () => renderer.capture();
 update();
@@ -1993,6 +2057,7 @@ $('decisions-later').onclick = () => {
   uiAt = 0;
 };
 $('new-game').onclick = () => {
+  resourceDrag.cancel();
   $<HTMLDialogElement>('settings-dialog').showModal();
 };
 $('settings-cancel').onclick = () => $<HTMLDialogElement>('settings-dialog').close();
@@ -2014,7 +2079,7 @@ $('settings-form').onsubmit = (e) => {
     toast(String(error));
   }
 };
-$('help').onclick = () => $<HTMLDialogElement>('help-dialog').showModal();
+$('help').onclick = () => { resourceDrag.cancel(); $<HTMLDialogElement>('help-dialog').showModal(); };
 $('help-close').onclick = () => $<HTMLDialogElement>('help-dialog').close();
 $('decision-close').onclick = () => $<HTMLDialogElement>('decision-dialog').close();
 let placing: Shape | null = null;
@@ -2177,6 +2242,8 @@ window.addEventListener('keydown', (e) => {
   if (/^[1-7]$/.test(e.key) && Number(e.key) <= controller.getState().lines.length)
     setLine(Number(e.key) - 1);
   if (e.key === 'Escape') {
+    resourceDrag.cancel();
+    setResourceTray(false);
     setLineChooser(false);
     draft = null;
     redrawing = false;
@@ -2214,8 +2281,8 @@ const api = {
     resetView();
     setTab(true);
   },
-  seek: (tick: number) => controller.seek(tick),
-  focusDecision: (index: number) => controller.focusDecision(index),
+  seek: (tick: number) => { resourceDrag.cancel(); return controller.seek(tick); },
+  focusDecision: (index: number) => { resourceDrag.cancel(); return controller.focusDecision(index); },
   observationAtDecision: (i: number) => controller.observationAtDecision(i),
   // Capture only the game canvas, with its scene cues, not DOM HUD or AI controls.
   capture: () => renderer.capture(),

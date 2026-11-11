@@ -1,0 +1,59 @@
+/* Inventory is neutral; route colors belong only to an explicit map target. */
+#resource-toggle { display: none; }
+/* Integration is a scrolling document: keep its inventory beside the visible
+   game rather than letting a stock press scroll the entire map away. */
+#game-shell { overflow: clip; }
+#game-shell .transport-bar { position: sticky; bottom: 0; }
+#resources { display: flex; gap: 8px; align-items: center; }
+#resources .resource-stock {
+  flex: 0 0 52px; position: relative; box-sizing: border-box; width: 52px; height: 44px;
+  min-width: 44px; min-height: 44px; margin: 0; padding: 3px 2px 12px;
+  display: flex; justify-content: center; align-items: center; gap: 3px;
+  border: 1px solid transparent; border-radius: 22px; background: transparent;
+  color: #343438; touch-action: none; user-select: none; font: 600 13px 'Noto Sans SC Metro', system-ui;
+}
+#resources .resource-stock svg { width: 18px; height: 22px; flex: 0 0 18px; }
+#resources .resource-stock b { color: inherit; font: 600 12px 'Noto Sans SC Metro', system-ui; }
+#resources .resource-stock small { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; color: #646267; font: 10px 'Noto Sans SC Metro', system-ui; }
+#resources button.resource-stock { cursor: grab; }
+#resources button.resource-stock:active { cursor: grabbing; }
+#resources button.resource-stock:hover, #resources button.resource-stock[aria-pressed="true"] { border-color: #66646a; background: #eceaeb; }
+#resources button.resource-stock:focus-visible { outline: 2px solid #343438; outline-offset: 1px; }
+#resources .resource-stock.empty { color: #969399; }
+#resources button.resource-stock:disabled { cursor: default; opacity: .6; }
+.resource-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#resource-preview { position: fixed; z-index: 60; pointer-events: none; color: var(--resource-line); width: 32px; height: 32px; transform: translate(-16px,-16px); }
+#resource-preview[hidden] { display: none; }
+#resource-preview svg { width: 32px; height: 32px; fill: #fffaf5b8; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+#resource-preview[data-kind="carriage"] svg { border: 2px dashed currentColor; border-radius: 7px; }
+#resource-preview[data-valid="true"] svg { filter: drop-shadow(0 0 2px #fff); }
+#resource-preview span { position: absolute; top: 40px; left: 0; width: max-content; max-width: 225px; padding: 4px 7px; border-radius: 5px; background: #fffaf5ee; color: #343438; border-left: 3px solid var(--resource-line); font: 600 11px 'Noto Sans SC Metro', system-ui; }
+@media (max-width: 650px) {
+  /* Swap controls inside the existing footer; never take drawable map height. */
+  #resource-toggle { display: block; flex: 0 0 44px; width: 44px; height: 44px; min-width: 44px; padding: 0; border: 1px solid #c5c1c8; border-radius: 22px; background: transparent; color: #343438; font: 600 11px 'Noto Sans SC Metro', system-ui; touch-action: manipulation; }
+  .transport-bar { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px; gap: 0; }
+  #resources, body.map-first .transport-bar #resources { display: none; }
+  .transport-controls { flex: 0 0 auto; }
+  .resource-tray-open .transport-controls > #play-pause, body.resource-tray-open .transport-bar .speed-switch { display: none; }
+  .resource-tray-open .transport-bar #resources, body.map-first.resource-tray-open .transport-bar #resources { display: flex; gap: 2px; margin-left: 0; }
+  .resource-tray-open .transport-bar .day-progress, .resource-tray-open .transport-bar .footer-right { display: none; }
+  #resources .resource-stock { flex-basis: 44px; width: 44px; padding-left: 0; padding-right: 0; gap: 4px; }
+  body.map-first .transport-bar { gap: 0; }
+  body.map-first.resource-tray-open .transport-controls { margin-right: 0; }
+}
+@media (max-width: 360px) {
+  .transport-bar .day-progress { display: none; }
+  .transport-bar .footer-right { display: none; }
+  body.map-first .transport-bar:has(~ *) { gap: 0; }
+  /* Two visible speed slots retain the third via horizontal keyboard/touch scrolling. */
+  body.map-first .speed-switch { width: 88px; overflow-x: auto; display: flex; }
+  body.map-first .speed-switch button { display: block; flex: 0 0 44px; }
+  body.map-first.resource-tray-open .transport-bar #resources [data-stock="tunnels"],
+  body.map-first.resource-tray-open .transport-bar #resources [data-stock="interchanges"] { flex-basis: 32px; width: 32px; min-width: 32px; }
+  body.map-first.resource-tray-open .transport-bar #resources [data-stock="tunnels"] svg,
+  body.map-first.resource-tray-open .transport-bar #resources [data-stock="interchanges"] svg { width: 14px; flex-basis: 14px; }
+}
+@media (min-width: 500px) and (max-width: 650px) and (max-height: 360px) {
+  body.map-first #context-actions:not([hidden]) { right: 234px !important; }
+}
+@media (prefers-reduced-motion: reduce) { #resource-preview, #resources * { transition: none; animation: none; } }

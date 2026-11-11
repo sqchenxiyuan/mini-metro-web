@@ -5,6 +5,7 @@ import { geographicLayout, pileBounds, queueDisplay, offscreenOwnerLabel,
   layoutOwnerCueLabels } from './mobile-map';
 import type { Shape, State } from './types';
 import { groupJitter, passengerJitter } from './visual-crowd';
+import type { EndpointHandle } from './endpoint-geometry';
 
 /** A single WebGL scene with geographic phone coordinates and screen-sized queue glyphs. */
 export class Mobile3DRenderer {
@@ -365,6 +366,13 @@ export class Mobile3DRenderer {
   unprojectGround(x:number,y:number){const p=this.scene.unproject(x,y);return p?{x:p.x*70/60,y:this.inverseY(p.y*70)}:null;}
   projectTrain(id:number){return this.scene.projectTrain(id);}
   getPaintedTrackLayout() { return this.scene.getPaintedTrackLayout(); }
+  /** CSS descriptors have already passed through the mobile geographic warp. */
+  setEndpointHandles(handles: readonly EndpointHandle[], redraw = true, _onCameraChange?: () => void): boolean {
+    const changed = this.scene.setEndpointHandles(handles, redraw);
+    // A cap redraw must restore the screen-sized mobile queue layer as well.
+    if (changed && redraw) this.paint();
+    return changed;
+  }
   projectTrackPoint(x:number,y:number,height=.6) { return this.scene.project(x,y,height); }
   hitTestLane(s:State,line:number,point:{x:number;y:number},radius=12){
     const layout = this.scene.getPaintedTrackLayout();

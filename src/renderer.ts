@@ -16,6 +16,7 @@ import type { City, ServiceEvent, Shape, State, Station } from './types';
 import { queueCueBounds, type OverlayPlacement } from './overlay-layout';
 import { deriveTrackLayout, type TrackLayout } from './track-layout';
 import { crowdFillFraction, groupJitter, passengerJitter } from './visual-crowd';
+import { createEndpointGeometry, type EndpointHandle } from './endpoint-geometry';
 
 /** Share the renderer's offset/miter geometry with pointer hit testing. */
 function laneVertices(
@@ -365,6 +366,13 @@ export class MetroRenderer {
   private environment = new THREE.Group();
   private tracks = new THREE.Group();
   private preview = new THREE.Group();
+  private endpointCaps = new THREE.Group();
+  private endpointHandles: readonly EndpointHandle[] = [];
+  private endpointMeshes = new Map<string, THREE.Mesh>();
+  private endpointGeometry: THREE.ExtrudeGeometry | null = null;
+  private endpointSignature = '';
+  private endpointProjection = '';
+  private onEndpointCameraChange?: () => void;
   private previewEdit: { line: number; lanes: Map<string, string> } | null = null;
   private stations = new Map<number, THREE.Group>();
   private trains = new Map<number, { group: THREE.Group; carriages: number; line: number; loadKey: string }>();
@@ -427,11 +435,11 @@ export class MetroRenderer {
     sun.shadow.normalBias = 0.04;
     sun.shadow.radius = 3;
     this.scene.add(sun);
-    this.scene.add(this.environment, this.tracks, this.preview);
+    this.scene.add(this.environment, this.tracks, this.preview, this.endpointCaps);
     this.cueCamera.position.z = 10;
     this.camera.position.set(0, 32, 24);
     this.camera.lookAt(0, 0, 0);
-    this.observer = new ResizeObserver(() => this.resize());
+    this.observer = new ResizeObserver(() => { this.resize(); this.onEndpointCameraChange?.(); });
     this.observer.observe(container);
     this.resize();
   }
@@ -439,6 +447,7 @@ export class MetroRenderer {
     this.manualCamera = true;
     this.zoom = Math.max(0.8, Math.min(1.8, value));
     this.resize();
+    this.onEndpointCameraChange?.();
   }
   getZoom(): number {
     return this.zoom;
@@ -461,9 +470,11 @@ export class MetroRenderer {
     );
     this.camera.position.set(this.center.x, 32, 24 + this.center.y);
     this.camera.lookAt(this.center.x, 0, this.center.y);
+    this.onEndpointCameraChange?.();
   }
   resetCamera(): void {
     this.clearPreview();
+    this.setEndpointHandles([], false);
     this.manualCamera = false;
     this.frameKey = '';
     this.frameSize = { width: 19, height: 13 };
@@ -664,6 +675,70 @@ export class MetroRenderer {
   /** Last painted lanes, including temporary ghost lanes (not editable routes). */
   getPaintedTrackLayout(): Readonly<TrackLayout> | null {
     return this.trackLayout;
+  }
+  /** Replace stage-local CSS handles. Returns true only when pixels need repaint.
+   * The mobile adapter passes already-warped projections, never map geography.
+   * A changed call redraws scene + desktop cues unless explicitly deferred.
+   */
+  setEndpointHandles(handles: readonly EndpointHandle[], redraw = true, onCameraChange?: () => void): boolean {
+    if (onCameraChange) this.onEndpointCameraChange = onCameraChange;
+    const signature = JSON.stringify(handles);
+    const changed = signature !== this.endpointSignature;
+    if (changed) {
+      this.endpointSignature = signature;
+      this.endpointHandles = handles.map(handle => ({ ...handle, owner: { ...handle.owner } }));
+    }
+    const projected = this.syncEndpointMeshes(changed);
+    if ((changed || projected) && redraw) this.drawScene();
+    return changed || projected;
+  }
+  private syncEndpointMeshes(force = false): boolean {
+    this.camera.updateMatrixWorld();
+    const projection = JSON.stringify([this.bounds, this.camera.matrixWorld.elements, this.camera.projectionMatrix.elements]);
+    if (!force && projection === this.endpointProjection) return false;
+    this.endpointProjection = projection;
+    const live = new Set(this.endpointHandles.map(handle => handle.key));
+    for (const [key, object] of this.endpointMeshes) if (!live.has(key)) {
+      this.endpointCaps.remove(object);
+      (object.material as THREE.Material).dispose();
+      this.endpointMeshes.delete(key);
+    }
+    for (const handle of this.endpointHandles) {
+      let object = this.endpointMeshes.get(handle.key);
+      if (!object) {
+        this.endpointGeometry ??= createEndpointGeometry();
+        object = mesh(this.endpointGeometry, MAT(LINE_COLORS[handle.line]));
+        object.name = `endpoint-${handle.key}`;
+        this.endpointMeshes.set(handle.key, object);
+        this.endpointCaps.add(object);
+      }
+      (object.material as THREE.MeshStandardMaterial).color.set(LINE_COLORS[handle.line]);
+      // Intersect the same fixed rail plane as the track. Uniform horizontal
+      // scale preserves the world's pitch/foreshortening, not a billboard T.
+      const center = this.unprojectAtHeight(handle.x, handle.y, .43);
+      const owner = this.unprojectAtHeight(handle.owner.x, handle.owner.y, .43);
+      const unit = this.unprojectAtHeight(handle.x + 1, handle.y, .43);
+      if (!center || !owner || !unit) { object.visible = false; continue; }
+      const pixel = Math.hypot(unit.x - center.x, unit.y - center.y);
+      const depth = pixel * 7.5;
+      // Align the roof's center to the CSS target while its bottom stays at
+      // rail height. No train state, animation phase or simulation RNG enters.
+      const roof = this.unprojectAtHeight(handle.x, handle.y, .43 + depth)!;
+      object.position.set(roof.x, .43, roof.y);
+      object.rotation.y = -Math.atan2(center.y - owner.y, center.x - owner.x);
+      object.scale.set(pixel, depth, pixel);
+      object.visible = true;
+    }
+    return true;
+  }
+  private drawScene(): void {
+    this.renderer.render(this.scene, this.camera);
+    if (this.cueEntries.size) {
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.sceneCues, this.cueCamera);
+      this.renderer.autoClear = true;
+    }
   }
   private buildEnvironment(city: City): void {
     disposeGroup(this.environment);
@@ -875,6 +950,11 @@ export class MetroRenderer {
   }
   render(s: State, selectedLine = 0, events?: readonly ServiceEvent[],
     motion?: { previous: State | null; alpha: number }): void {
+    // Superseded endpoints disappear even before the DOM's next handle paint.
+    const eligible = new Set(s.lines.filter(line => !line.loop && line.stops.length >= 2)
+      .flatMap(line => [`${line.id}-start`, `${line.id}-end`]));
+    if (this.endpointHandles.some(handle => !eligible.has(handle.key)))
+      this.setEndpointHandles(this.endpointHandles.filter(handle => eligible.has(handle.key)), false);
     if (this.loadSnapshot && (s.seed !== this.loadSnapshot.seed || s.tick < this.loadSnapshot.tick))
       this.clearPreview();
     if (this.loadSnapshot && s.tick < this.loadSnapshot.tick && !this.manualCamera) this.resetCamera();
@@ -1053,6 +1133,7 @@ export class MetroRenderer {
       entry.group.visible = true;
     }
     this.previousTrainAnchors = new Map([...this.trains].map(([id, entry]) => [id, entry.group.position.clone()]));
+    this.syncEndpointMeshes();
     this.renderer.render(this.scene, this.camera);
   }
   projectTrain(id: number): { x: number; y: number } | null {
@@ -1083,6 +1164,10 @@ export class MetroRenderer {
   }
   dispose(): void {
     this.observer.disconnect();
+    this.onEndpointCameraChange = undefined;
+    this.setEndpointHandles([], false);
+    this.endpointGeometry?.dispose();
+    this.endpointGeometry = null;
     this.transfers.clear();
     for (const entry of this.cueEntries.values()) disposeCue(entry);
     this.cueEntries.clear();
